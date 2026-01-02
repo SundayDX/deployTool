@@ -285,6 +285,9 @@
             <div class="system-card">
                 <button class="btn btn-settings" onclick="showSettings()">系统设置</button>
             </div>
+            <div class="system-card">
+                <button class="btn btn-deploy" onclick="showProjectManagement()">项目管理</button>
+            </div>
         </div>
 
         <div id="alert-container"></div>
@@ -338,6 +341,45 @@
                     <button class="btn btn-deploy" onclick="saveSettings()">保存设置</button>
                     <button class="btn btn-system" onclick="testDingtalk()" style="margin-left: 10px;">测试钉钉通知</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="projectManagementModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('projectManagementModal')">&times;</span>
+            <h2>项目管理</h2>
+            <div id="projectManagementContent">
+                <button class="btn btn-deploy" onclick="showAddProjectForm()" style="margin-bottom: 20px;">添加新项目</button>
+
+                <div id="addProjectForm" style="display: none; background: #f5f5f5; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
+                    <h3>添加/编辑项目</h3>
+                    <input type="hidden" id="edit-project-id" value="">
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">项目名称:</label>
+                        <input type="text" id="project-name" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;" placeholder="我的项目">
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">项目描述:</label>
+                        <input type="text" id="project-description" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;" placeholder="项目描述（可选）">
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">项目路径:</label>
+                        <input type="text" id="project-path" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;" placeholder="/path/to/your/project">
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block;">
+                            <input type="checkbox" id="project-auto-restart" checked>
+                            自动重启服务
+                        </label>
+                    </div>
+                    <div>
+                        <button class="btn btn-deploy" onclick="saveProject()">保存项目</button>
+                        <button class="btn btn-status" onclick="cancelProjectForm()" style="margin-left: 10px;">取消</button>
+                    </div>
+                </div>
+
+                <div id="projectsList"></div>
             </div>
         </div>
     </div>
@@ -597,6 +639,145 @@
             } catch (error) {
                 showAlert('发送失败: ' + error.message, 'error');
             }
+        }
+
+        // 显示项目管理
+        function showProjectManagement() {
+            const modal = document.getElementById('projectManagementModal');
+            modal.style.display = 'block';
+            loadProjectsList();
+        }
+
+        // 加载项目列表（用于项目管理）
+        async function loadProjectsList() {
+            try {
+                const response = await fetch('/api/projects');
+                const projectsData = await response.json();
+
+                const listDiv = document.getElementById('projectsList');
+                if (projectsData.length === 0) {
+                    listDiv.innerHTML = '<p style="text-align: center; color: #999;">暂无项目</p>';
+                    return;
+                }
+
+                listDiv.innerHTML = projectsData.map((project, index) => `
+                    <div style="background: white; padding: 15px; margin-bottom: 15px; border-radius: 6px; border: 1px solid #ddd;">
+                        <h3 style="margin-bottom: 10px;">${project.name}</h3>
+                        <p style="color: #666; margin-bottom: 5px;">${project.description || '暂无描述'}</p>
+                        <p style="color: #999; font-family: monospace; margin-bottom: 10px;">${project.path}</p>
+                        <p style="margin-bottom: 10px;">
+                            <span style="color: ${project.auto_restart ? '#4caf50' : '#999'};">
+                                ${project.auto_restart ? '✓ 自动重启' : '✗ 不自动重启'}
+                            </span>
+                        </p>
+                        <button class="btn btn-status" onclick="editProject(${index})" style="margin-right: 10px;">编辑</button>
+                        <button class="btn btn-status" onclick="deleteProject(${index})" style="background: #f44336; color: white;">删除</button>
+                    </div>
+                `).join('');
+            } catch (error) {
+                showAlert('加载项目列表失败: ' + error.message, 'error');
+            }
+        }
+
+        // 显示添加项目表单
+        function showAddProjectForm() {
+            document.getElementById('addProjectForm').style.display = 'block';
+            document.getElementById('edit-project-id').value = '';
+            document.getElementById('project-name').value = '';
+            document.getElementById('project-description').value = '';
+            document.getElementById('project-path').value = '';
+            document.getElementById('project-auto-restart').checked = true;
+        }
+
+        // 编辑项目
+        function editProject(projectId) {
+            const project = projects[projectId];
+            document.getElementById('addProjectForm').style.display = 'block';
+            document.getElementById('edit-project-id').value = projectId;
+            document.getElementById('project-name').value = project.name;
+            document.getElementById('project-description').value = project.description || '';
+            document.getElementById('project-path').value = project.path;
+            document.getElementById('project-auto-restart').checked = project.auto_restart;
+        }
+
+        // 保存项目
+        async function saveProject() {
+            const projectId = document.getElementById('edit-project-id').value;
+            const projectData = {
+                name: document.getElementById('project-name').value,
+                description: document.getElementById('project-description').value,
+                path: document.getElementById('project-path').value,
+                auto_restart: document.getElementById('project-auto-restart').checked
+            };
+
+            if (!projectData.name || !projectData.path) {
+                showAlert('项目名称和路径不能为空', 'error');
+                return;
+            }
+
+            try {
+                let response;
+                if (projectId === '') {
+                    // 添加新项目
+                    response = await fetch('/api/projects', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(projectData)
+                    });
+                } else {
+                    // 更新项目
+                    response = await fetch(`/api/projects/${projectId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(projectData)
+                    });
+                }
+
+                const result = await response.json();
+                if (result.success) {
+                    showAlert(result.message, 'success');
+                    cancelProjectForm();
+                    loadProjectsList();
+                    loadProjects(); // 重新加载首页项目列表
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('保存项目失败: ' + error.message, 'error');
+            }
+        }
+
+        // 删除项目
+        async function deleteProject(projectId) {
+            if (!confirm('确定要删除此项目吗？')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/projects/${projectId}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showAlert(result.message, 'success');
+                    loadProjectsList();
+                    loadProjects(); // 重新加载首页项目列表
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('删除项目失败: ' + error.message, 'error');
+            }
+        }
+
+        // 取消项目表单
+        function cancelProjectForm() {
+            document.getElementById('addProjectForm').style.display = 'none';
         }
 
         // 关闭模态框

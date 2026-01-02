@@ -65,6 +65,16 @@ def load_projects():
             return json.load(f)
     return []
 
+def save_projects(projects):
+    """保存项目配置"""
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(projects, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"保存项目配置失败: {e}")
+        return False
+
 def run_command(command, cwd=None):
     """执行命令并返回输出"""
     try:
@@ -306,6 +316,83 @@ def test_dingtalk():
         return jsonify({'success': True, 'message': '测试消息已发送'})
     else:
         return jsonify({'success': False, 'message': '发送失败，请检查配置'}), 500
+
+@app.route('/api/projects', methods=['POST'])
+def add_project():
+    """添加新项目"""
+    data = request.json
+
+    # 验证必需字段
+    if not data.get('name') or not data.get('path'):
+        return jsonify({'success': False, 'message': '项目名称和路径不能为空'}), 400
+
+    projects = load_projects()
+
+    # 检查路径是否已存在
+    for project in projects:
+        if project['path'] == data['path']:
+            return jsonify({'success': False, 'message': '该路径已存在'}), 400
+
+    # 添加新项目
+    new_project = {
+        'name': data.get('name'),
+        'description': data.get('description', ''),
+        'path': data.get('path'),
+        'auto_restart': data.get('auto_restart', True)
+    }
+
+    projects.append(new_project)
+
+    if save_projects(projects):
+        return jsonify({'success': True, 'message': '项目添加成功', 'projects': projects})
+    else:
+        return jsonify({'success': False, 'message': '保存失败'}), 500
+
+@app.route('/api/projects/<int:project_id>', methods=['PUT'])
+def update_project(project_id):
+    """更新项目配置"""
+    data = request.json
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    # 验证必需字段
+    if not data.get('name') or not data.get('path'):
+        return jsonify({'success': False, 'message': '项目名称和路径不能为空'}), 400
+
+    # 检查路径是否与其他项目冲突
+    for i, project in enumerate(projects):
+        if i != project_id and project['path'] == data['path']:
+            return jsonify({'success': False, 'message': '该路径已被其他项目使用'}), 400
+
+    # 更新项目
+    projects[project_id] = {
+        'name': data.get('name'),
+        'description': data.get('description', ''),
+        'path': data.get('path'),
+        'auto_restart': data.get('auto_restart', True)
+    }
+
+    if save_projects(projects):
+        return jsonify({'success': True, 'message': '项目更新成功', 'projects': projects})
+    else:
+        return jsonify({'success': False, 'message': '保存失败'}), 500
+
+@app.route('/api/projects/<int:project_id>', methods=['DELETE'])
+def delete_project(project_id):
+    """删除项目"""
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    deleted_project = projects.pop(project_id)
+
+    if save_projects(projects):
+        return jsonify({'success': True, 'message': f'项目 "{deleted_project["name"]}" 已删除', 'projects': projects})
+    else:
+        return jsonify({'success': False, 'message': '保存失败'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=6666, debug=True)
