@@ -78,13 +78,16 @@ def save_projects(projects):
 def run_command(command, cwd=None):
     """执行命令并返回输出"""
     try:
+        # 使用 bash 并设置完整的 PATH
         result = subprocess.run(
             command,
             shell=True,
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=300,
+            executable='/bin/bash',
+            env={**os.environ, 'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}
         )
         return {
             'success': result.returncode == 0,
