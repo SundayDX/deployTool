@@ -1,0 +1,15 @@
+[Unit]
+Description=Deploy Manager Service
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/deploy-manager
+Environment="PATH=/path/to/deploy-manager/venv/bin"
+ExecStart=/path/to/deploy-manager/venv/bin/python /path/to/deploy-manager/app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

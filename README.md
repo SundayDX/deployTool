@@ -25,19 +25,61 @@
 - 支持自定义 Webhook 和加签密钥
 - 在线测试钉钉通知功能
 
-## 安装步骤
+## 快速开始
 
-### 1. 安装依赖
+### 方法一：自动安装（推荐）
+
+使用一键安装脚本，自动完成所有配置：
 
 ```bash
-# 确保已安装 Python 3.7+
-python3 --version
+# 克隆项目
+git clone https://github.com/SundayDX/deployTool.git
+cd deployTool
 
-# 安装 Python 依赖
-pip3 install -r requirements.txt
+# 执行自动部署脚本
+sudo bash deploy.sh
 ```
 
-### 2. 配置项目
+自动部署脚本会：
+- 安装系统依赖（Python3, pip, venv）
+- 创建虚拟环境并安装 Python 依赖
+- 配置 systemd 服务
+- 自动启动应用
+
+### 方法二：从网络直接安装
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/install.sh | sudo bash
+```
+
+### 方法三：手动安装
+
+如果需要手动控制安装过程：
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/SundayDX/deployTool.git
+cd deployTool
+
+# 2. 安装系统依赖
+sudo apt install -y python3 python3-pip python3-venv  # Ubuntu/Debian
+# 或
+sudo yum install -y python3 python3-pip  # CentOS/RHEL
+
+# 3. 创建虚拟环境
+python3 -m venv venv
+
+# 4. 激活虚拟环境并安装依赖
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 5. 启动应用
+python app.py
+```
+
+## 配置说明
+
+### 配置项目
 
 编辑 `projects.json` 文件，添加你的项目信息：
 
@@ -58,20 +100,14 @@ pip3 install -r requirements.txt
 - `path`: 项目在服务器上的绝对路径
 - `auto_restart`: 是否在构建后自动重启服务（true/false）
 
-### 3. 启动服务
+### 访问界面
 
-```bash
-python3 app.py
+安装完成后，在浏览器中访问：
+```
+http://your-server-ip:6666
 ```
 
-服务将在 `http://0.0.0.0:5000` 启动。
-
-### 4. 访问界面
-
-在浏览器中访问：
-```
-http://your-server-ip:5000
-```
+默认端口为 6666，可在 `app.py` 中修改。
 
 ## 使用方法
 
@@ -114,30 +150,44 @@ http://your-server-ip:5000
 4. 安全设置选择"加签"（可选）
 5. 复制 Webhook 地址到配置中
 
-## 生产环境部署建议
+## 服务管理
 
-### 使用 systemd 服务
+如果使用自动部署脚本安装，系统会自动配置为 systemd 服务。
 
-创建服务文件 `/etc/systemd/system/deploy-manager.service`：
+### 常用命令
 
-```ini
-[Unit]
-Description=Deploy Manager Service
-After=network.target
+```bash
+# 查看服务状态
+sudo systemctl status deploy-manager
 
-[Service]
-Type=simple
-User=your-username
-WorkingDirectory=/path/to/deploy-manager
-ExecStart=/usr/bin/python3 /path/to/deploy-manager/app.py
-Restart=always
+# 启动服务
+sudo systemctl start deploy-manager
 
-[Install]
-WantedBy=multi-user.target
+# 停止服务
+sudo systemctl stop deploy-manager
+
+# 重启服务
+sudo systemctl restart deploy-manager
+
+# 查看实时日志
+sudo journalctl -u deploy-manager -f
+
+# 查看最近日志
+sudo journalctl -u deploy-manager -n 100
 ```
 
-启动服务：
+### 手动配置 systemd 服务
+
+如果是手动安装，可以参考项目中的 `deploy-manager.service` 文件：
+
 ```bash
+# 复制服务文件
+sudo cp deploy-manager.service /etc/systemd/system/
+
+# 修改服务文件中的路径和用户名
+sudo nano /etc/systemd/system/deploy-manager.service
+
+# 重载并启动服务
 sudo systemctl daemon-reload
 sudo systemctl enable deploy-manager
 sudo systemctl start deploy-manager
