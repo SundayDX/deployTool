@@ -819,6 +819,10 @@ def add_project():
         'auto_restart': data.get('auto_restart', True)
     }
 
+    # 添加SSH配置（如果有）
+    if 'ssh' in data:
+        new_project['ssh'] = data['ssh']
+
     projects.append(new_project)
 
     if save_projects(projects):
@@ -851,6 +855,10 @@ def update_project(project_id):
         'path': data.get('path'),
         'auto_restart': data.get('auto_restart', True)
     }
+
+    # 添加SSH配置（如果有）
+    if 'ssh' in data:
+        projects[project_id]['ssh'] = data['ssh']
 
     if save_projects(projects):
         return jsonify({'success': True, 'message': '项目更新成功', 'projects': projects})
