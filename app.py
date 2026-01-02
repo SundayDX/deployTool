@@ -125,7 +125,8 @@ def run_command(command, cwd=None):
         }
 
 def run_command_stream(command, cwd=None):
-    """执行命令并实时流式返回输出（生成器）"""
+    """执行命令并实时流式返回输出（生成器），最后一行返回退出码"""
+    return_code = -1
     try:
         # 获取当前脚本目录（安装目录）
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -157,16 +158,17 @@ def run_command_stream(command, cwd=None):
         # 实时读取输出
         for line in iter(process.stdout.readline, ''):
             if line:
-                yield line
+                yield ('output', line)
 
         process.stdout.close()
         return_code = process.wait()
 
-        if return_code != 0:
-            yield f"\n[错误] 命令退出码: {return_code}\n"
+        # 返回退出码
+        yield ('returncode', return_code)
 
     except Exception as e:
-        yield f"\n[异常] {str(e)}\n"
+        yield ('output', f"\n[异常] {str(e)}\n")
+        yield ('returncode', -1)
 
 @app.route('/')
 def index():
@@ -312,14 +314,17 @@ def deploy_project_stream(project_id):
         # 执行 git pull
         yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'running'})}\n\n"
 
-        for line in run_command_stream('git pull', cwd=project_path):
-            yield f"data: {json.dumps({'type': 'output', 'step': 'git pull', 'line': line.rstrip()})}\n\n"
+        git_return_code = 0
+        for item_type, content in run_command_stream('git pull', cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': 'git pull', 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                git_return_code = content
 
-        # 检查 git pull 是否成功（简单判断）
-        git_check = run_command('git status', cwd=project_path)
-        if git_check['returncode'] != 0:
+        # 检查 git pull 是否成功
+        if git_return_code != 0:
             overall_success = False
-            error_message = 'Git pull 可能失败'
+            error_message = f'Git pull 失败 (退出码: {git_return_code})'
             yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
             return
@@ -329,17 +334,17 @@ def deploy_project_stream(project_id):
         # 执行 docker compose build
         yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'running'})}\n\n"
 
-        build_success = True
-        for line in run_command_stream('docker compose build', cwd=project_path):
-            yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose build', 'line': line.rstrip()})}\n\n"
-            # 检测错误关键词
-            if 'ERROR' in line.upper() or 'FAILED' in line.upper():
-                build_success = False
+        build_return_code = 0
+        for item_type, content in run_command_stream('docker compose build', cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose build', 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                build_return_code = content
 
         # 验证 build 结果
-        if not build_success:
+        if build_return_code != 0:
             overall_success = False
-            error_message = 'Docker compose build 失败'
+            error_message = f'Docker compose build 失败 (退出码: {build_return_code})'
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'error'})}\n\n"
             send_dingtalk_notification(
                 f"项目部署失败: {project['name']}",
@@ -356,18 +361,32 @@ def deploy_project_stream(project_id):
             # docker compose down
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'running'})}\n\n"
 
-            for line in run_command_stream('docker compose down', cwd=project_path):
-                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose down', 'line': line.rstrip()})}\n\n"
+            down_return_code = 0
+            for item_type, content in run_command_stream('docker compose down', cwd=project_path):
+                if item_type == 'output':
+                    yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose down', 'line': content.rstrip()})}\n\n"
+                elif item_type == 'returncode':
+                    down_return_code = content
 
-            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'success'})}\n\n"
+            if down_return_code == 0:
+                yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'success'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'error'})}\n\n"
 
             # docker compose up -d
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'running'})}\n\n"
 
-            for line in run_command_stream('docker compose up -d', cwd=project_path):
-                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose up -d', 'line': line.rstrip()})}\n\n"
+            up_return_code = 0
+            for item_type, content in run_command_stream('docker compose up -d', cwd=project_path):
+                if item_type == 'output':
+                    yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose up -d', 'line': content.rstrip()})}\n\n"
+                elif item_type == 'returncode':
+                    up_return_code = content
 
-            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'success'})}\n\n"
+            if up_return_code == 0:
+                yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'success'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'error'})}\n\n"
 
         # 发送成功通知
         send_dingtalk_notification(
