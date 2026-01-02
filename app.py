@@ -6,6 +6,8 @@ from datetime import datetime
 import threading
 import requests
 import time
+import paramiko
+import socket
 
 app = Flask(__name__)
 
@@ -169,6 +171,97 @@ def run_command_stream(command, cwd=None):
     except Exception as e:
         yield ('output', f"\n[异常] {str(e)}\n")
         yield ('returncode', -1)
+
+def run_ssh_command_stream(command, ssh_config, cwd=None):
+    """通过SSH执行命令并实时流式返回输出（生成器）"""
+    ssh_client = None
+    return_code = -1
+
+    try:
+        # 创建SSH客户端
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        # 连接参数
+        host = ssh_config.get('host')
+        port = ssh_config.get('port', 22)
+        user = ssh_config.get('user', 'root')
+        key_file = ssh_config.get('key_file')
+        password = ssh_config.get('password')
+
+        # 连接到远程服务器
+        connect_kwargs = {
+            'hostname': host,
+            'port': port,
+            'username': user,
+            'timeout': 10
+        }
+
+        if key_file and os.path.exists(key_file):
+            connect_kwargs['key_filename'] = key_file
+        elif password:
+            connect_kwargs['password'] = password
+        else:
+            # 尝试使用默认密钥
+            default_keys = [
+                os.path.expanduser('~/.ssh/id_rsa'),
+                os.path.expanduser('~/.ssh/id_ed25519')
+            ]
+            for key in default_keys:
+                if os.path.exists(key):
+                    connect_kwargs['key_filename'] = key
+                    break
+
+        ssh_client.connect(**connect_kwargs)
+
+        # 如果指定了工作目录，添加cd命令
+        if cwd:
+            command = f"cd {cwd} && {command}"
+
+        # 执行命令
+        stdin, stdout, stderr = ssh_client.exec_command(command, get_pty=True)
+
+        # 实时读取输出
+        while True:
+            line = stdout.readline()
+            if not line:
+                break
+            yield ('output', line)
+
+        # 获取退出码
+        return_code = stdout.channel.recv_exit_status()
+        yield ('returncode', return_code)
+
+    except paramiko.AuthenticationException:
+        yield ('output', f"\n[SSH错误] 认证失败，请检查用户名、密码或密钥\n")
+        yield ('returncode', -1)
+    except paramiko.SSHException as e:
+        yield ('output', f"\n[SSH错误] SSH连接异常: {str(e)}\n")
+        yield ('returncode', -1)
+    except socket.timeout:
+        yield ('output', f"\n[SSH错误] 连接超时\n")
+        yield ('returncode', -1)
+    except Exception as e:
+        yield ('output', f"\n[异常] {str(e)}\n")
+        yield ('returncode', -1)
+    finally:
+        if ssh_client:
+            ssh_client.close()
+
+def execute_command_stream(command, project, cwd=None):
+    """根据项目配置选择本地或SSH执行（生成器）"""
+    ssh_config = project.get('ssh', {})
+
+    if ssh_config.get('enabled', False):
+        # SSH模式
+        actual_cwd = cwd if cwd else project.get('path')
+        for item in run_ssh_command_stream(command, ssh_config, actual_cwd):
+            yield item
+    else:
+        # 本地模式
+        actual_cwd = cwd if cwd else project.get('path')
+        for item in run_command_stream(command, actual_cwd):
+            yield item
 
 @app.route('/')
 def index():
@@ -410,19 +503,24 @@ def pull_build_project(project_id):
     project = projects[project_id]
     project_path = project['path']
 
-    if not os.path.exists(project_path):
-        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+    # SSH模式下不检查本地路径
+    if not project.get('ssh', {}).get('enabled', False):
+        if not os.path.exists(project_path):
+            return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
 
     def generate():
         """生成器函数，用于流式输出"""
+        ssh_mode = project.get('ssh', {}).get('enabled', False)
+        mode_text = f" (SSH: {project.get('ssh', {}).get('host', '')})" if ssh_mode else " (本地)"
+
         # 发送开始信号
-        yield f"data: {json.dumps({'type': 'start', 'project': project['name']})}\n\n"
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
 
         # 执行 git pull
         yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'running'})}\n\n"
 
         git_return_code = 0
-        for item_type, content in run_command_stream('git pull', cwd=project_path):
+        for item_type, content in execute_command_stream('git pull', project):
             if item_type == 'output':
                 yield f"data: {json.dumps({'type': 'output', 'step': 'git pull', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
@@ -440,7 +538,7 @@ def pull_build_project(project_id):
         yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'running'})}\n\n"
 
         build_return_code = 0
-        for item_type, content in run_command_stream('docker compose build', cwd=project_path):
+        for item_type, content in execute_command_stream('docker compose build', project):
             if item_type == 'output':
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose build', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
@@ -559,8 +657,10 @@ def execute_custom_command(project_id):
     project = projects[project_id]
     project_path = project['path']
 
-    if not os.path.exists(project_path):
-        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+    # SSH模式下不检查本地路径
+    if not project.get('ssh', {}).get('enabled', False):
+        if not os.path.exists(project_path):
+            return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
 
     # 获取用户输入的命令
     data = request.get_json()
@@ -579,14 +679,17 @@ def execute_custom_command(project_id):
 
     def generate():
         """生成器函数，用于流式输出"""
+        ssh_mode = project.get('ssh', {}).get('enabled', False)
+        mode_text = f" SSH({project.get('ssh', {}).get('host', '')})" if ssh_mode else " 本地"
+
         # 发送开始信号
-        yield f"data: {json.dumps({'type': 'start', 'project': project['name'], 'command': custom_command})}\n\n"
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text, 'command': custom_command})}\n\n"
 
         # 执行自定义命令
         yield f"data: {json.dumps({'type': 'step', 'step': f'执行: {custom_command}', 'status': 'running'})}\n\n"
 
         cmd_return_code = 0
-        for item_type, content in run_command_stream(custom_command, cwd=project_path):
+        for item_type, content in execute_command_stream(custom_command, project):
             if item_type == 'output':
                 yield f"data: {json.dumps({'type': 'output', 'step': custom_command, 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':

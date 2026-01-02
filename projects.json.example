@@ -1,14 +1,34 @@
 [
     {
-        "name": "示例项目 1",
-        "description": "这是一个示例项目",
+        "name": "本地项目示例",
+        "description": "在本地服务器上运行的项目",
         "path": "/path/to/your/project1",
         "auto_restart": true
     },
     {
-        "name": "示例项目 2",
-        "description": "另一个示例项目",
-        "path": "/path/to/your/project2",
-        "auto_restart": true
+        "name": "远程SSH项目示例",
+        "description": "通过SSH管理的远程项目",
+        "path": "/path/to/remote/project",
+        "auto_restart": true,
+        "ssh": {
+            "enabled": true,
+            "host": "192.168.1.100",
+            "port": 22,
+            "user": "root",
+            "key_file": "/root/.ssh/id_rsa"
+        }
+    },
+    {
+        "name": "SSH密码认证示例",
+        "description": "使用密码认证的SSH项目（不推荐）",
+        "path": "/home/user/project",
+        "auto_restart": true,
+        "ssh": {
+            "enabled": true,
+            "host": "example.com",
+            "port": 22,
+            "user": "deploy",
+            "password": "your_password_here"
+        }
     }
 ]
