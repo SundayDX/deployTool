@@ -141,7 +141,16 @@ echo "  文件复制完成"
 # 配置 git 安全目录（避免 dubious ownership 错误）
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo "  配置 Git 安全目录..."
+    # 使用实际用户配置，避免权限问题
+    sudo -u $ACTUAL_USER bash -c "git config --global --add safe.directory '$INSTALL_DIR'" 2>/dev/null || true
+
+    # 设置正确的所有权
+    cd "$INSTALL_DIR"
     sudo -u $ACTUAL_USER git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
+
+    # 确保配置文件不被 git 跟踪（如果已经在仓库中）
+    sudo -u $ACTUAL_USER git update-index --assume-unchanged projects.json 2>/dev/null || true
+    sudo -u $ACTUAL_USER git update-index --assume-unchanged settings.json 2>/dev/null || true
 fi
 
 # 创建虚拟环境和安装依赖
@@ -160,7 +169,11 @@ echo ""
 echo "[5/6] 创建配置文件..."
 
 if [ ! -f "$INSTALL_DIR/settings.json" ]; then
-    cat > "$INSTALL_DIR/settings.json" <<EOF
+    if [ -f "$INSTALL_DIR/settings.json.example" ]; then
+        cp "$INSTALL_DIR/settings.json.example" "$INSTALL_DIR/settings.json"
+        echo "  从示例文件创建 settings.json"
+    else
+        cat > "$INSTALL_DIR/settings.json" <<EOF
 {
     "dingtalk": {
         "enabled": false,
@@ -169,8 +182,22 @@ if [ ! -f "$INSTALL_DIR/settings.json" ]; then
     }
 }
 EOF
+        echo "  已创建 settings.json"
+    fi
     chown $ACTUAL_USER:$ACTUAL_USER "$INSTALL_DIR/settings.json"
-    echo "  已创建 settings.json"
+fi
+
+if [ ! -f "$INSTALL_DIR/projects.json" ]; then
+    if [ -f "$INSTALL_DIR/projects.json.example" ]; then
+        cp "$INSTALL_DIR/projects.json.example" "$INSTALL_DIR/projects.json"
+        echo "  从示例文件创建 projects.json"
+    else
+        cat > "$INSTALL_DIR/projects.json" <<EOF
+[]
+EOF
+        echo "  已创建空的 projects.json"
+    fi
+    chown $ACTUAL_USER:$ACTUAL_USER "$INSTALL_DIR/projects.json"
 fi
 
 # 创建 systemd 服务

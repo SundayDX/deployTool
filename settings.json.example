@@ -1,0 +1,7 @@
+{
+    "dingtalk": {
+        "enabled": false,
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": ""
+    }
+}

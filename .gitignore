@@ -26,5 +26,6 @@ Thumbs.db
 # Logs
 *.log
 
-# Settings (可能包含敏感信息)
+# Configuration files (user-specific, should not be overwritten)
 settings.json
+projects.json

@@ -62,33 +62,53 @@ echo "[2/5] 停止服务..."
 systemctl stop deploy-manager 2>/dev/null || true
 echo "  服务已停止"
 
-# 拉取最新代码
+# 配置 git 安全目录（避免 dubious ownership 错误）
 echo ""
-echo "[3/5] 拉取最新代码..."
+echo "[3/5] 配置 Git 环境..."
 cd "$INSTALL_DIR"
 
-# 保存本地修改（如果有）
-sudo -u $ACTUAL_USER git stash 2>/dev/null || true
+# 添加安全目录配置
+sudo -u $ACTUAL_USER git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
+echo "  Git 安全目录已配置"
 
-# 拉取更新
+# 拉取最新代码
+echo ""
+echo "[4/5] 拉取最新代码..."
+
+# 将配置文件添加到 git 的临时忽略列表（如果它们被跟踪了）
+sudo -u $ACTUAL_USER git update-index --assume-unchanged projects.json 2>/dev/null || true
+sudo -u $ACTUAL_USER git update-index --assume-unchanged settings.json 2>/dev/null || true
+
+# 拉取更新（使用 pull 而不是 reset，这样会保留本地未跟踪的文件）
 sudo -u $ACTUAL_USER git fetch origin
-sudo -u $ACTUAL_USER git reset --hard origin/main
+sudo -u $ACTUAL_USER git pull origin main --rebase 2>/dev/null || {
+    echo "  使用 merge 策略..."
+    sudo -u $ACTUAL_USER git reset --hard origin/main
+}
 
 echo "  代码已更新"
 
-# 恢复配置文件
+# 确保配置文件存在（恢复备份）
 echo ""
-echo "[4/5] 恢复配置文件..."
+echo "[5/5] 确保配置文件完整..."
 if [ -f "$BACKUP_DIR/projects.json" ]; then
-    cp "$BACKUP_DIR/projects.json" "$INSTALL_DIR/"
-    chown $ACTUAL_USER:$ACTUAL_USER "$INSTALL_DIR/projects.json"
-    echo "  已恢复 projects.json"
+    if [ ! -f "$INSTALL_DIR/projects.json" ] || [ ! -s "$INSTALL_DIR/projects.json" ]; then
+        cp "$BACKUP_DIR/projects.json" "$INSTALL_DIR/"
+        chown $ACTUAL_USER:$ACTUAL_USER "$INSTALL_DIR/projects.json"
+        echo "  已恢复 projects.json"
+    else
+        echo "  projects.json 已存在，保持不变"
+    fi
 fi
 
 if [ -f "$BACKUP_DIR/settings.json" ]; then
-    cp "$BACKUP_DIR/settings.json" "$INSTALL_DIR/"
-    chown $ACTUAL_USER:$ACTUAL_USER "$INSTALL_DIR/settings.json"
-    echo "  已恢复 settings.json"
+    if [ ! -f "$INSTALL_DIR/settings.json" ] || [ ! -s "$INSTALL_DIR/settings.json" ]; then
+        cp "$BACKUP_DIR/settings.json" "$INSTALL_DIR/"
+        chown $ACTUAL_USER:$ACTUAL_USER "$INSTALL_DIR/settings.json"
+        echo "  已恢复 settings.json"
+    else
+        echo "  settings.json 已存在，保持不变"
+    fi
 fi
 
 # 更新 Python 依赖
