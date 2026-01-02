@@ -689,7 +689,7 @@ def execute_custom_command(project_id):
         yield f"data: {json.dumps({'type': 'step', 'step': f'执行: {custom_command}', 'status': 'running'})}\n\n"
 
         cmd_return_code = 0
-        for item_type, content in execute_command_stream(custom_command, project):
+        for item_type, content in execute_command_stream(custom_command, project, cwd=project_path):
             if item_type == 'output':
                 yield f"data: {json.dumps({'type': 'output', 'step': custom_command, 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
