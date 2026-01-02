@@ -379,18 +379,53 @@ def run_ssh_command_stream(command, ssh_config, cwd=None):
         if cwd:
             command = f"cd {cwd} && {command}"
 
-        # 执行命令
-        stdin, stdout, stderr = ssh_client.exec_command(command, get_pty=True)
+        # 执行命令 - 不使用PTY，避免缓冲问题
+        stdin, stdout, stderr = ssh_client.exec_command(command, get_pty=False)
 
-        # 实时读取输出
-        while True:
-            line = stdout.readline()
-            if not line:
-                break
-            yield ('output', line)
+        # 设置channel为非阻塞模式
+        channel = stdout.channel
+        channel.setblocking(0)
+
+        # 实时读取输出 - 使用非阻塞读取
+        buffer = b''
+        while not channel.exit_status_ready() or channel.recv_ready() or channel.recv_stderr_ready():
+            # 读取stdout
+            if channel.recv_ready():
+                data = channel.recv(1024)
+                if data:
+                    buffer += data
+                    # 按行分割并输出
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        try:
+                            yield ('output', line.decode('utf-8', errors='replace') + '\n')
+                        except:
+                            yield ('output', line.decode('latin-1') + '\n')
+
+            # 读取stderr
+            if channel.recv_stderr_ready():
+                data = channel.recv_stderr(1024)
+                if data:
+                    buffer += data
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        try:
+                            yield ('output', line.decode('utf-8', errors='replace') + '\n')
+                        except:
+                            yield ('output', line.decode('latin-1') + '\n')
+
+            # 短暂休眠，避免CPU占用过高
+            time.sleep(0.01)
+
+        # 输出剩余的buffer
+        if buffer:
+            try:
+                yield ('output', buffer.decode('utf-8', errors='replace'))
+            except:
+                yield ('output', buffer.decode('latin-1'))
 
         # 获取退出码
-        return_code = stdout.channel.recv_exit_status()
+        return_code = channel.recv_exit_status()
         yield ('returncode', return_code)
 
     except paramiko.AuthenticationException:
