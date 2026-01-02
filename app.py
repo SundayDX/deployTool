@@ -1087,8 +1087,17 @@ def get_project_status(project_id):
     images_info = []
 
     # 尝试使用 docker compose images 命令获取镜像信息
-    images_cmd = 'docker compose images --format json 2>/dev/null'
+    # 不使用 2>/dev/null，因为在 SSH 的 cd && command 模式下可能有问题
+    images_cmd = 'docker compose images --format json'
     images_result = execute_command(images_cmd, project, cwd=project_path)
+
+    # Debug logging
+    print(f"DEBUG: SSH mode: {ssh_config.get('enabled', False)}")
+    print(f"DEBUG: images command success: {images_result['success']}")
+    print(f"DEBUG: images stdout length: {len(images_result['stdout'])}")
+    print(f"DEBUG: images stdout preview: {images_result['stdout'][:200]}")
+    if images_result['stderr']:
+        print(f"DEBUG: images stderr: {images_result['stderr']}")
 
     if images_result['success'] and images_result['stdout'].strip():
         # 解析JSON输出
@@ -1111,8 +1120,15 @@ def get_project_status(project_id):
                             continue
 
                         # 获取镜像创建时间
-                        inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" "{image_name}" 2>/dev/null'
+                        # 不使用 2>/dev/null，因为在 SSH 的 cd && command 模式下可能有问题
+                        inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" "{image_name}"'
                         inspect_result = execute_command(inspect_cmd, project, cwd=project_path)
+
+                        print(f"DEBUG: Inspect image: {image_name}")
+                        print(f"DEBUG: Inspect success: {inspect_result['success']}")
+                        print(f"DEBUG: Inspect stdout: {inspect_result['stdout']}")
+                        if inspect_result['stderr']:
+                            print(f"DEBUG: Inspect stderr: {inspect_result['stderr']}")
 
                         if inspect_result['success'] and inspect_result['stdout'].strip():
                             created_time = inspect_result['stdout'].strip()
@@ -1128,8 +1144,12 @@ def get_project_status(project_id):
 
     # 如果docker compose images不可用，使用备用方法
     if not images_info:
-        docker_ps_cmd = 'docker compose ps --format json 2>/dev/null'
+        docker_ps_cmd = 'docker compose ps --format json'
         ps_result = execute_command(docker_ps_cmd, project, cwd=project_path)
+
+        print(f"DEBUG: Fallback to ps command")
+        print(f"DEBUG: ps command success: {ps_result['success']}")
+        print(f"DEBUG: ps stdout length: {len(ps_result['stdout'])}")
 
         if ps_result['success'] and ps_result['stdout'].strip():
             try:
@@ -1148,7 +1168,7 @@ def get_project_status(project_id):
                                 processed_images.add(image_name)
 
                                 # 获取镜像创建时间
-                                inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" "{image_name}" 2>/dev/null'
+                                inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" "{image_name}"'
                                 inspect_result = execute_command(inspect_cmd, project, cwd=project_path)
 
                                 if inspect_result['success'] and inspect_result['stdout'].strip():
