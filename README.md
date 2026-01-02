@@ -48,8 +48,15 @@ sudo bash deploy.sh
 
 ### 方法二：从网络直接安装
 
+一行命令完成安装，脚本会自动克隆到临时目录，安装后清理：
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/install.sh | sudo bash
+```
+
+自定义安装目录：
+```bash
+curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/install.sh | sudo INSTALL_DIR=/opt/deploy-manager bash
 ```
 
 ### 方法三：手动安装
