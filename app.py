@@ -676,6 +676,8 @@ def pull_build_project(project_id):
         mode_text = f" (SSH: {ssh_host})" if ssh_mode else " (本地)"
 
         output_log = []  # 收集输出用于日志
+        max_log_lines = 1000  # 限制日志行数，避免内存问题
+        line_count = 0
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
@@ -686,7 +688,9 @@ def pull_build_project(project_id):
         git_return_code = 0
         for item_type, content in execute_command_stream('git pull', project):
             if item_type == 'output':
-                output_log.append(content)
+                if line_count < max_log_lines:
+                    output_log.append(content)
+                    line_count += 1
                 yield f"data: {json.dumps({'type': 'output', 'step': 'git pull', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 git_return_code = content
@@ -695,8 +699,8 @@ def pull_build_project(project_id):
             error_message = f'Git pull 失败 (退出码: {git_return_code})'
             yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
-            # 保存日志
-            save_operation_log(project_id, project['name'], 'Pull & Build', False, ''.join(output_log), ssh_mode, ssh_host)
+            # 异步保存日志
+            threading.Thread(target=save_operation_log, args=(project_id, project['name'], 'Pull & Build', False, ''.join(output_log), ssh_mode, ssh_host), daemon=True).start()
             return
 
         yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'success'})}\n\n"
@@ -707,7 +711,9 @@ def pull_build_project(project_id):
         build_return_code = 0
         for item_type, content in execute_command_stream('docker compose build', project):
             if item_type == 'output':
-                output_log.append(content)
+                if line_count < max_log_lines:
+                    output_log.append(content)
+                    line_count += 1
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose build', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 build_return_code = content
@@ -716,15 +722,15 @@ def pull_build_project(project_id):
             error_message = f'Docker compose build 失败 (退出码: {build_return_code})'
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
-            # 保存日志
-            save_operation_log(project_id, project['name'], 'Pull & Build', False, ''.join(output_log), ssh_mode, ssh_host)
+            # 异步保存日志
+            threading.Thread(target=save_operation_log, args=(project_id, project['name'], 'Pull & Build', False, ''.join(output_log), ssh_mode, ssh_host), daemon=True).start()
             return
 
         yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'success'})}\n\n"
         yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': 'Pull & Build 完成'})}\n\n"
 
-        # 保存日志
-        save_operation_log(project_id, project['name'], 'Pull & Build', True, ''.join(output_log), ssh_mode, ssh_host)
+        # 异步保存日志
+        threading.Thread(target=save_operation_log, args=(project_id, project['name'], 'Pull & Build', True, ''.join(output_log), ssh_mode, ssh_host), daemon=True).start()
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -751,6 +757,8 @@ def restart_project(project_id):
         mode_text = f" (SSH: {ssh_host})" if ssh_mode else " (本地)"
 
         output_log = []  # 收集输出用于日志
+        max_log_lines = 1000  # 限制日志行数
+        line_count = 0
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
@@ -761,7 +769,9 @@ def restart_project(project_id):
         down_return_code = 0
         for item_type, content in execute_command_stream('docker compose down', project, cwd=project_path):
             if item_type == 'output':
-                output_log.append(content)
+                if line_count < max_log_lines:
+                    output_log.append(content)
+                    line_count += 1
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose down', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 down_return_code = content
@@ -777,7 +787,9 @@ def restart_project(project_id):
         up_return_code = 0
         for item_type, content in execute_command_stream('docker compose up -d', project, cwd=project_path):
             if item_type == 'output':
-                output_log.append(content)
+                if line_count < max_log_lines:
+                    output_log.append(content)
+                    line_count += 1
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose up -d', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 up_return_code = content
@@ -791,8 +803,8 @@ def restart_project(project_id):
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': 'docker compose up 失败'})}\n\n"
 
-        # 保存日志
-        save_operation_log(project_id, project['name'], 'Down & Up', success, ''.join(output_log), ssh_mode, ssh_host)
+        # 异步保存日志
+        threading.Thread(target=save_operation_log, args=(project_id, project['name'], 'Down & Up', success, ''.join(output_log), ssh_mode, ssh_host), daemon=True).start()
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -819,6 +831,8 @@ def clean_project(project_id):
         mode_text = f" (SSH: {ssh_host})" if ssh_mode else " (本地)"
 
         output_log = []  # 收集输出用于日志
+        max_log_lines = 1000  # 限制日志行数
+        line_count = 0
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
@@ -829,7 +843,9 @@ def clean_project(project_id):
         prune_return_code = 0
         for item_type, content in execute_command_stream('docker system prune -af', project, cwd=project_path):
             if item_type == 'output':
-                output_log.append(content)
+                if line_count < max_log_lines:
+                    output_log.append(content)
+                    line_count += 1
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker system prune -f', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 prune_return_code = content
@@ -843,8 +859,8 @@ def clean_project(project_id):
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker system prune -f', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': '清理失败'})}\n\n"
 
-        # 保存日志
-        save_operation_log(project_id, project['name'], 'Clean', success, ''.join(output_log), ssh_mode, ssh_host)
+        # 异步保存日志
+        threading.Thread(target=save_operation_log, args=(project_id, project['name'], 'Clean', success, ''.join(output_log), ssh_mode, ssh_host), daemon=True).start()
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -886,6 +902,8 @@ def execute_custom_command(project_id):
         mode_text = f" SSH({ssh_host})" if ssh_mode else " 本地"
 
         output_log = []  # 收集输出用于日志
+        max_log_lines = 1000  # 限制日志行数
+        line_count = 0
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text, 'command': custom_command})}\n\n"
@@ -896,7 +914,9 @@ def execute_custom_command(project_id):
         cmd_return_code = 0
         for item_type, content in execute_command_stream(custom_command, project, cwd=project_path):
             if item_type == 'output':
-                output_log.append(content)
+                if line_count < max_log_lines:
+                    output_log.append(content)
+                    line_count += 1
                 yield f"data: {json.dumps({'type': 'output', 'step': custom_command, 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 cmd_return_code = content
@@ -910,8 +930,8 @@ def execute_custom_command(project_id):
             yield f"data: {json.dumps({'type': 'step', 'step': custom_command, 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': f'命令执行失败 (退出码: {cmd_return_code})'})}\n\n"
 
-        # 保存日志
-        save_operation_log(project_id, project['name'], f'自定义命令: {custom_command}', success, ''.join(output_log), ssh_mode, ssh_host)
+        # 异步保存日志
+        threading.Thread(target=save_operation_log, args=(project_id, project['name'], f'自定义命令: {custom_command}', success, ''.join(output_log), ssh_mode, ssh_host), daemon=True).start()
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
