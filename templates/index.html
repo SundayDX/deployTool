@@ -1022,12 +1022,65 @@
                 const result = await response.json();
 
                 if (result.success) {
+                    // 格式化镜像信息
+                    let imagesHtml = '';
+                    if (result.images_info && result.images_info.length > 0) {
+                        imagesHtml = '<p><strong>Docker 镜像构建时间:</strong></p><div style="margin-left: 10px;">';
+                        result.images_info.forEach(img => {
+                            // 解析并格式化时间
+                            const createdDate = new Date(img.created);
+                            const now = new Date();
+                            const diffMs = now - createdDate;
+                            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+                            const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+                            let timeAgo = '';
+                            if (diffDays > 0) {
+                                timeAgo = `${diffDays}天前`;
+                            } else if (diffHours > 0) {
+                                timeAgo = `${diffHours}小时前`;
+                            } else if (diffMinutes > 0) {
+                                timeAgo = `${diffMinutes}分钟前`;
+                            } else {
+                                timeAgo = '刚刚';
+                            }
+
+                            const formattedTime = createdDate.toLocaleString('zh-CN', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: false
+                            });
+
+                            // 根据时间判断是否需要重新构建（超过7天显示警告）
+                            const needRebuild = diffDays > 7;
+                            const colorStyle = needRebuild ? 'color: #ff9800;' : 'color: #4caf50;';
+
+                            imagesHtml += `
+                                <p style="margin: 5px 0;">
+                                    <strong style="${colorStyle}">${img.service}:</strong>
+                                    <span style="color: #666;">${img.image}</span><br>
+                                    <span style="margin-left: 20px; font-size: 0.9em; color: #888;">
+                                        构建于 ${formattedTime} (${timeAgo})
+                                        ${needRebuild ? '<span style="color: #ff9800;">⚠️ 超过7天，建议重新构建</span>' : ''}
+                                    </span>
+                                </p>
+                            `;
+                        });
+                        imagesHtml += '</div>';
+                    }
+
                     contentDiv.innerHTML = `
                         <p><strong>分支:</strong> ${result.git_branch}</p>
                         <p><strong>最新提交:</strong></p>
                         <pre>${result.git_log}</pre>
                         <p><strong>Git 状态:</strong></p>
                         <pre>${result.git_status || '工作目录干净'}</pre>
+                        ${imagesHtml}
                         <p><strong>Docker 容器状态:</strong></p>
                         <pre>${result.docker_status}</pre>
                     `;

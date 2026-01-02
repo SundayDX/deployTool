@@ -955,12 +955,52 @@ def get_project_status(project_id):
     # 获取 docker 容器状态
     docker_ps = execute_command('docker compose ps', project, cwd=project_path)
 
+    # 获取 docker compose 配置的镜像
+    docker_config = execute_command('docker compose config --services', project, cwd=project_path)
+
+    # 获取镜像构建时间
+    images_info = []
+    if docker_config['success'] and docker_config['stdout'].strip():
+        services = docker_config['stdout'].strip().split('\n')
+        for service in services:
+            # 获取服务对应的镜像名称
+            image_cmd = f'docker compose config | grep -A 10 "^  {service}:" | grep "image:" | head -1 || echo ""'
+            image_result = execute_command(image_cmd, project, cwd=project_path)
+
+            # 如果没有指定image，则使用项目名_service名作为镜像名
+            if not image_result['stdout'].strip() or 'image:' not in image_result['stdout']:
+                # 从docker compose ps获取实际镜像名
+                ps_image_cmd = f"docker compose ps {service} --format json 2>/dev/null | grep -o '\"Image\":\"[^\"]*\"' | cut -d'\"' -f4 || echo ''"
+                ps_image_result = execute_command(ps_image_cmd, project, cwd=project_path)
+
+                if ps_image_result['success'] and ps_image_result['stdout'].strip():
+                    image_name = ps_image_result['stdout'].strip()
+                else:
+                    # 使用默认命名规则：目录名_服务名
+                    project_name = os.path.basename(project_path)
+                    image_name = f"{project_name}_{service}"
+            else:
+                image_name = image_result['stdout'].split('image:')[-1].strip()
+
+            # 获取镜像创建时间
+            inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" {image_name} 2>/dev/null || echo "未找到镜像"'
+            inspect_result = execute_command(inspect_cmd, project, cwd=project_path)
+
+            if inspect_result['success'] and inspect_result['stdout'].strip() and '未找到镜像' not in inspect_result['stdout']:
+                created_time = inspect_result['stdout'].strip()
+                images_info.append({
+                    'service': service,
+                    'image': image_name,
+                    'created': created_time
+                })
+
     return jsonify({
         'success': True,
         'git_status': git_status['stdout'],
         'git_branch': git_branch['stdout'].strip(),
         'git_log': git_log['stdout'],
-        'docker_status': docker_ps['stdout']
+        'docker_status': docker_ps['stdout'],
+        'images_info': images_info
     })
 
 @app.route('/api/system/info', methods=['GET'])
