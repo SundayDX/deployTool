@@ -1,0 +1,14 @@
+[
+    {
+        "name": "示例项目 1",
+        "description": "这是一个示例项目",
+        "path": "/path/to/your/project1",
+        "auto_restart": true
+    },
+    {
+        "name": "示例项目 2",
+        "description": "另一个示例项目",
+        "path": "/path/to/your/project2",
+        "auto_restart": true
+    }
+]
