@@ -287,7 +287,7 @@ def deploy_project(project_id):
         'logs': logs
     })
 
-@app.route('/api/deploy-stream/<int:project_id>', methods=['POST'])
+@app.route('/api/deploy-stream/<int:project_id>', methods=['GET', 'POST'])
 def deploy_project_stream(project_id):
     """部署指定项目（实时流式输出）"""
     projects = load_projects()
