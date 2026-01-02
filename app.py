@@ -1073,6 +1073,7 @@ def get_project_status(project_id):
 
     project = projects[project_id]
     project_path = project['path']
+    ssh_config = project.get('ssh', {})
 
     # 使用 execute_command 支持本地和SSH模式
     # 获取 git 状态
