@@ -399,6 +399,155 @@ def deploy_project_stream(project_id):
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
+@app.route('/api/pull-build/<int:project_id>', methods=['GET', 'POST'])
+def pull_build_project(project_id):
+    """执行 git pull 和 docker compose build（实时流式输出）"""
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    project = projects[project_id]
+    project_path = project['path']
+
+    if not os.path.exists(project_path):
+        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+
+    def generate():
+        """生成器函数，用于流式输出"""
+        # 发送开始信号
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name']})}\n\n"
+
+        # 执行 git pull
+        yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'running'})}\n\n"
+
+        git_return_code = 0
+        for item_type, content in run_command_stream('git pull', cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': 'git pull', 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                git_return_code = content
+
+        if git_return_code != 0:
+            error_message = f'Git pull 失败 (退出码: {git_return_code})'
+            yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'error'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'success'})}\n\n"
+
+        # 执行 docker compose build
+        yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'running'})}\n\n"
+
+        build_return_code = 0
+        for item_type, content in run_command_stream('docker compose build', cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose build', 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                build_return_code = content
+
+        if build_return_code != 0:
+            error_message = f'Docker compose build 失败 (退出码: {build_return_code})'
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'error'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'success'})}\n\n"
+        yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': 'Pull & Build 完成'})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+@app.route('/api/restart/<int:project_id>', methods=['GET', 'POST'])
+def restart_project(project_id):
+    """执行 docker compose down 和 up -d（实时流式输出）"""
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    project = projects[project_id]
+    project_path = project['path']
+
+    if not os.path.exists(project_path):
+        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+
+    def generate():
+        """生成器函数，用于流式输出"""
+        # 发送开始信号
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name']})}\n\n"
+
+        # docker compose down
+        yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'running'})}\n\n"
+
+        down_return_code = 0
+        for item_type, content in run_command_stream('docker compose down', cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose down', 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                down_return_code = content
+
+        if down_return_code == 0:
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'success'})}\n\n"
+        else:
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'error'})}\n\n"
+
+        # docker compose up -d
+        yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'running'})}\n\n"
+
+        up_return_code = 0
+        for item_type, content in run_command_stream('docker compose up -d', cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose up -d', 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                up_return_code = content
+
+        if up_return_code == 0:
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'success'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': '重启完成'})}\n\n"
+        else:
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'error'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': 'docker compose up 失败'})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+@app.route('/api/clean/<int:project_id>', methods=['GET', 'POST'])
+def clean_project(project_id):
+    """执行 docker system prune（实时流式输出）"""
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    project = projects[project_id]
+    project_path = project['path']
+
+    if not os.path.exists(project_path):
+        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+
+    def generate():
+        """生成器函数，用于流式输出"""
+        # 发送开始信号
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name']})}\n\n"
+
+        # docker system prune
+        yield f"data: {json.dumps({'type': 'step', 'step': 'docker system prune -f', 'status': 'running'})}\n\n"
+
+        prune_return_code = 0
+        for item_type, content in run_command_stream('docker system prune -af', cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': 'docker system prune -f', 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                prune_return_code = content
+
+        if prune_return_code == 0:
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker system prune -f', 'status': 'success'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': '清理完成'})}\n\n"
+        else:
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker system prune -f', 'status': 'error'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': '清理失败'})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
 @app.route('/api/status/<int:project_id>', methods=['GET'])
 def get_project_status(project_id):
     """获取项目状态"""

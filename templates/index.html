@@ -154,6 +154,67 @@
             background: #e0e0e0;
         }
 
+        .button-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-pull-build {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .btn-pull-build:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        .btn-pull-build:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
+        .btn-restart {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .btn-restart:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4);
+        }
+
+        .btn-restart:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
+        .btn-clean {
+            background: linear-gradient(135deg, #ffa500 0%, #ff6347 100%);
+            color: white;
+            flex: 1;
+            min-width: 100px;
+        }
+
+        .btn-clean:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(255, 165, 0, 0.4);
+        }
+
+        .btn-clean:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
         .status-info {
             margin-top: 15px;
             padding: 15px;
@@ -420,11 +481,22 @@
                     <h2>${project.name}</h2>
                     <p>${project.description || '暂无描述'}</p>
                     <div class="project-path">${project.path}</div>
-                    <div>
-                        <button class="btn btn-deploy" onclick="deployProject(${index})">
-                            <span id="deploy-text-${index}">部署项目</span>
+                    <div class="button-group">
+                        <button class="btn btn-pull-build" onclick="pullBuildProject(${index})">
+                            <span id="pull-build-text-${index}">Pull & Build</span>
                         </button>
+                        <button class="btn btn-restart" onclick="restartProject(${index})">
+                            <span id="restart-text-${index}">Down & Up</span>
+                        </button>
+                        <button class="btn btn-clean" onclick="cleanProject(${index})">
+                            <span id="clean-text-${index}">Clean</span>
+                        </button>
+                    </div>
+                    <div class="button-group">
                         <button class="btn btn-status" onclick="toggleStatus(${index})">查看状态</button>
+                        <button class="btn btn-deploy" onclick="deployProject(${index})">
+                            <span id="deploy-text-${index}">一键部署</span>
+                        </button>
                     </div>
                     <div class="status-info" id="status-${index}">
                         <div id="status-content-${index}">加载中...</div>
@@ -534,6 +606,115 @@
                 btn.disabled = false;
                 document.querySelector(`#deploy-text-${projectId}`).textContent = originalText;
             };
+        }
+
+        // 通用流式执行函数
+        function executeStreamAction(projectId, endpoint, buttonId, actionName) {
+            const btn = document.querySelector(`#${buttonId}-${projectId}`).parentElement;
+            const originalText = document.querySelector(`#${buttonId}-${projectId}`).textContent;
+
+            btn.disabled = true;
+            document.querySelector(`#${buttonId}-${projectId}`).innerHTML = `<span class="loading"></span> 执行中...`;
+
+            // 打开日志模态窗口并准备显示实时日志
+            const modal = document.getElementById('logModal');
+            const content = document.getElementById('logContent');
+            content.innerHTML = `<div class="log-entry"><h3>准备 ${actionName}...</h3></div>`;
+            modal.style.display = 'block';
+
+            // 使用 EventSource 接收实时流式数据
+            const eventSource = new EventSource(`/api/${endpoint}/${projectId}`);
+            let currentStep = null;
+            let currentStepDiv = null;
+            let currentOutputPre = null;
+
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'start') {
+                    content.innerHTML = `<div class="log-entry"><h3>开始 ${actionName}: ${data.project}</h3></div>`;
+                } else if (data.type === 'step') {
+                    if (data.status === 'running') {
+                        currentStep = data.step;
+                        currentStepDiv = document.createElement('div');
+                        currentStepDiv.className = 'log-entry';
+                        currentStepDiv.innerHTML = `
+                            <h3><span class="loading"></span> ${data.step}...</h3>
+                            <pre class="log-output"></pre>
+                        `;
+                        content.appendChild(currentStepDiv);
+                        currentOutputPre = currentStepDiv.querySelector('.log-output');
+                        content.scrollTop = content.scrollHeight;
+                    } else if (data.status === 'success') {
+                        if (currentStepDiv && data.step === currentStep) {
+                            currentStepDiv.className = 'log-entry success';
+                            currentStepDiv.querySelector('h3').innerHTML = `✓ ${data.step}`;
+                        }
+                    } else if (data.status === 'error') {
+                        if (currentStepDiv && data.step === currentStep) {
+                            currentStepDiv.className = 'log-entry error';
+                            currentStepDiv.querySelector('h3').innerHTML = `✗ ${data.step}`;
+                        }
+                    }
+                } else if (data.type === 'output') {
+                    if (currentOutputPre && data.step === currentStep) {
+                        currentOutputPre.textContent += data.line + '\n';
+                        content.scrollTop = content.scrollHeight;
+                    }
+                } else if (data.type === 'complete') {
+                    eventSource.close();
+
+                    if (data.success) {
+                        showAlert(data.message, 'success');
+                        const completeDiv = document.createElement('div');
+                        completeDiv.className = 'log-entry success';
+                        completeDiv.innerHTML = `<h3>✓ ${actionName}完成</h3><p>${data.message}</p>`;
+                        content.appendChild(completeDiv);
+                    } else {
+                        showAlert(data.message, 'error');
+                        const completeDiv = document.createElement('div');
+                        completeDiv.className = 'log-entry error';
+                        completeDiv.innerHTML = `<h3>✗ ${actionName}失败</h3><p>${data.message}</p>`;
+                        content.appendChild(completeDiv);
+                    }
+
+                    btn.disabled = false;
+                    document.querySelector(`#${buttonId}-${projectId}`).textContent = originalText;
+                    content.scrollTop = content.scrollHeight;
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error('EventSource error:', error);
+                eventSource.close();
+                showAlert(`${actionName}过程中发生错误`, 'error');
+
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'log-entry error';
+                errorDiv.innerHTML = `<h3>✗ 连接错误</h3><p>无法连接到服务器</p>`;
+                content.appendChild(errorDiv);
+
+                btn.disabled = false;
+                document.querySelector(`#${buttonId}-${projectId}`).textContent = originalText;
+            };
+        }
+
+        // Pull & Build
+        function pullBuildProject(projectId) {
+            executeStreamAction(projectId, 'pull-build', 'pull-build-text', 'Pull & Build');
+        }
+
+        // Down & Up (重启)
+        function restartProject(projectId) {
+            executeStreamAction(projectId, 'restart', 'restart-text', 'Down & Up');
+        }
+
+        // Clean
+        function cleanProject(projectId) {
+            if (!confirm('确定要执行 docker system prune 吗？这将清理所有未使用的 Docker 资源（镜像、容器、网络等）')) {
+                return;
+            }
+            executeStreamAction(projectId, 'clean', 'clean-text', 'Clean');
         }
 
         // 切换状态显示
