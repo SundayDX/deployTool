@@ -78,7 +78,20 @@ def save_projects(projects):
 def run_command(command, cwd=None):
     """执行命令并返回输出"""
     try:
-        # 使用 bash 并设置完整的 PATH
+        # 获取当前脚本目录（安装目录）
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # 构建环境变量
+        env = {
+            **os.environ,
+            'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+            # 为 git 命令添加 safe.directory 配置，避免 dubious ownership 错误
+            'GIT_CONFIG_COUNT': '1',
+            'GIT_CONFIG_KEY_0': 'safe.directory',
+            'GIT_CONFIG_VALUE_0': script_dir
+        }
+
+        # 使用 bash 并设置完整的环境
         result = subprocess.run(
             command,
             shell=True,
@@ -87,7 +100,7 @@ def run_command(command, cwd=None):
             text=True,
             timeout=300,
             executable='/bin/bash',
-            env={**os.environ, 'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}
+            env=env
         )
         return {
             'success': result.returncode == 0,
