@@ -24,6 +24,29 @@ echo "项目部署管理系统 - 快速安装"
 echo "=========================================="
 echo ""
 
+# 检查是否已经安装
+if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/app.py" ]; then
+    echo "检测到已有安装: $INSTALL_DIR"
+    echo ""
+    echo "如果要更新现有安装，请使用更新脚本："
+    echo "  cd $INSTALL_DIR && sudo bash update.sh"
+    echo ""
+    echo "如果要通过 Web 界面更新："
+    echo "  访问 http://服务器IP:6666"
+    echo "  点击 '查看系统信息' -> '立即更新'"
+    echo ""
+    read -p "确定要删除现有安装并重新安装吗？这将丢失所有配置！(yes/no) " -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo "安装已取消"
+        echo ""
+        echo "提示: 如果要更新，使用以下命令："
+        echo "  cd $INSTALL_DIR && sudo bash update.sh"
+        exit 0
+    fi
+    echo "警告: 将删除现有安装并重新开始..."
+fi
+
 # 清理函数
 cleanup() {
     if [ -d "$TEMP_CLONE_DIR" ]; then

@@ -46,13 +46,17 @@ sudo bash deploy.sh
 - 配置 systemd 服务
 - 自动启动应用
 
-### 方法二：从网络直接安装
+### 方法二：从网络直接安装（首次安装）
+
+⚠️ **注意**: 此命令仅用于**首次安装**。如果已经安装，请使用更新命令！
 
 一行命令完成安装，脚本会自动克隆到临时目录，安装后清理：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/install.sh | sudo bash
 ```
+
+如果检测到已有安装，脚本会提示你使用更新命令而不是重新安装。
 
 自定义安装目录：
 ```bash
@@ -159,14 +163,27 @@ http://your-server-ip:6666
 
 ## 系统更新
 
-### 方法一：Web 界面更新（推荐）
+⚠️ **重要提示**:
+- **首次安装**使用 `install.sh`
+- **已有安装的更新**使用 `update.sh` 或 Web 界面
+- **绝对不要**用 `install.sh` 来更新，会删除所有配置！
 
-1. 点击"查看系统信息"
-2. 查看版本信息和更新状态
-3. 如果有更新，点击"立即更新"按钮
-4. 等待更新完成后刷新页面
+### 方法一：Web 界面更新（最推荐）
 
-### 方法二：命令行更新
+1. 访问 `http://服务器IP:6666`
+2. 点击"查看系统信息"
+3. 查看版本信息和更新状态
+4. 如果有更新，点击"立即更新"按钮
+5. 等待更新完成后刷新页面
+
+### 方法二：一键命令行更新
+
+```bash
+# 从网络直接更新（推荐）
+curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/quickupdate.sh | sudo bash
+```
+
+### 方法三：本地命令行更新
 
 ```bash
 # 进入安装目录
@@ -176,7 +193,7 @@ cd ~/deploy-manager  # 或你的安装目录
 sudo bash update.sh
 ```
 
-### 方法三：手动更新
+### 方法四：完全手动更新
 
 ```bash
 # 进入安装目录
