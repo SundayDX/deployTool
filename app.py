@@ -287,8 +287,15 @@ def execute_command(command, project, cwd=None):
         # 本地模式
         return run_command(command, actual_cwd)
 
-def run_command_stream(command, cwd=None):
-    """执行命令并实时流式返回输出（生成器），最后一行返回退出码"""
+def run_command_stream(command, cwd=None, timeout=3600, idle_timeout=300):
+    """执行命令并实时流式返回输出（生成器），最后一行返回退出码
+
+    Args:
+        command: 要执行的命令
+        cwd: 工作目录
+        timeout: 总超时时间（秒），默认1小时
+        idle_timeout: 空闲超时时间（秒），默认5分钟无输出则超时
+    """
     return_code = -1
     try:
         # 获取当前脚本目录（安装目录）
@@ -318,10 +325,41 @@ def run_command_stream(command, cwd=None):
             universal_newlines=True
         )
 
-        # 实时读取输出
-        for line in iter(process.stdout.readline, ''):
-            if line:
-                yield ('output', line)
+        # 记录开始时间和最后输出时间
+        start_time = time.time()
+        last_output_time = start_time
+
+        # 实时读取输出 - 添加超时检测
+        import select
+        while True:
+            # 检查总超时
+            if time.time() - start_time > timeout:
+                process.kill()
+                yield ('output', f"\n[超时] 命令执行超过 {timeout} 秒，已强制终止\n")
+                yield ('returncode', -1)
+                return
+
+            # 检查空闲超时
+            if time.time() - last_output_time > idle_timeout:
+                process.kill()
+                yield ('output', f"\n[空闲超时] 命令超过 {idle_timeout} 秒无输出，已强制终止\n")
+                yield ('output', f"提示: 可能是交互式命令等待输入，请使用非交互式参数（如: apt-get -y, docker build --no-cache）\n")
+                yield ('returncode', -1)
+                return
+
+            # 使用select检查是否有数据可读（超时0.1秒）
+            if process.stdout in select.select([process.stdout], [], [], 0.1)[0]:
+                line = process.stdout.readline()
+                if line:
+                    yield ('output', line)
+                    last_output_time = time.time()
+                else:
+                    # 没有更多数据，进程可能已结束
+                    break
+            else:
+                # 检查进程是否还在运行
+                if process.poll() is not None:
+                    break
 
         process.stdout.close()
         return_code = process.wait()
@@ -333,8 +371,16 @@ def run_command_stream(command, cwd=None):
         yield ('output', f"\n[异常] {str(e)}\n")
         yield ('returncode', -1)
 
-def run_ssh_command_stream(command, ssh_config, cwd=None):
-    """通过SSH执行命令并实时流式返回输出（生成器）"""
+def run_ssh_command_stream(command, ssh_config, cwd=None, timeout=3600, idle_timeout=300):
+    """通过SSH执行命令并实时流式返回输出（生成器）
+
+    Args:
+        command: 要执行的命令
+        ssh_config: SSH配置
+        cwd: 工作目录
+        timeout: 总超时时间（秒），默认1小时
+        idle_timeout: 空闲超时时间（秒），默认5分钟无输出则超时
+    """
     ssh_client = None
     return_code = -1
 
@@ -386,14 +432,33 @@ def run_ssh_command_stream(command, ssh_config, cwd=None):
         channel = stdout.channel
         channel.setblocking(0)
 
-        # 实时读取输出 - 使用非阻塞读取
+        # 实时读取输出 - 使用非阻塞读取，添加超时检测
         buffer = b''
+        start_time = time.time()
+        last_output_time = start_time
+
         while not channel.exit_status_ready() or channel.recv_ready() or channel.recv_stderr_ready():
+            # 检查总超时
+            if time.time() - start_time > timeout:
+                channel.close()
+                yield ('output', f"\n[超时] SSH命令执行超过 {timeout} 秒，已强制终止\n")
+                yield ('returncode', -1)
+                return
+
+            # 检查空闲超时
+            if time.time() - last_output_time > idle_timeout:
+                channel.close()
+                yield ('output', f"\n[空闲超时] SSH命令超过 {idle_timeout} 秒无输出，已强制终止\n")
+                yield ('output', f"提示: 可能是交互式命令等待输入，请使用非交互式参数\n")
+                yield ('returncode', -1)
+                return
+
             # 读取stdout
             if channel.recv_ready():
                 data = channel.recv(1024)
                 if data:
                     buffer += data
+                    last_output_time = time.time()
                     # 按行分割并输出
                     while b'\n' in buffer:
                         line, buffer = buffer.split(b'\n', 1)
@@ -407,6 +472,7 @@ def run_ssh_command_stream(command, ssh_config, cwd=None):
                 data = channel.recv_stderr(1024)
                 if data:
                     buffer += data
+                    last_output_time = time.time()
                     while b'\n' in buffer:
                         line, buffer = buffer.split(b'\n', 1)
                         try:
@@ -930,6 +996,27 @@ def execute_custom_command(project_id):
         if pattern in custom_command.lower():
             return jsonify({'success': False, 'message': f'检测到危险命令，已阻止执行'}), 403
 
+    # 检测可能的交互式命令并警告
+    interactive_commands = {
+        'apt-get install': '使用 apt-get install -y 避免交互',
+        'apt install': '使用 apt install -y 避免交互',
+        'yum install': '使用 yum install -y 避免交互',
+        'npm install': '通常不需要交互，但注意某些包可能需要',
+        'docker login': '这是交互式命令，建议提前登录',
+        'ssh': 'SSH命令需要交互，请使用密钥认证或传递参数',
+        'sudo': 'sudo可能需要密码，建议配置NOPASSWD',
+        'vim': '编辑器命令无法使用，请用sed/awk等非交互工具',
+        'nano': '编辑器命令无法使用，请用sed/awk等非交互工具',
+        'less': '分页命令无法使用，请直接查看文件或使用cat',
+        'more': '分页命令无法使用，请直接查看文件或使用cat'
+    }
+
+    warning_message = None
+    for cmd_pattern, suggestion in interactive_commands.items():
+        if cmd_pattern in custom_command.lower():
+            warning_message = f"⚠️ 检测到可能的交互式命令: {suggestion}"
+            break
+
     def generate():
         """生成器函数，用于流式输出"""
         ssh_mode = project.get('ssh', {}).get('enabled', False)
@@ -942,6 +1029,12 @@ def execute_custom_command(project_id):
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text, 'command': custom_command})}\n\n"
+
+        # 如果有警告，先显示警告
+        if warning_message:
+            yield f"data: {json.dumps({'type': 'output', 'step': 'warning', 'line': warning_message})}\n\n"
+            yield f"data: {json.dumps({'type': 'output', 'step': 'warning', 'line': '命令将在5分钟无输出后自动超时'})}\n\n"
+            yield f"data: {json.dumps({'type': 'output', 'step': 'warning', 'line': ''})}\n\n"
 
         # 执行自定义命令
         yield f"data: {json.dumps({'type': 'step', 'step': f'执行: {custom_command}', 'status': 'running'})}\n\n"
