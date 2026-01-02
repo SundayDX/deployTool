@@ -27,9 +27,28 @@
 
 ## 快速开始
 
-### 方法一：自动安装（推荐）
+### 方法一：智能安装/更新（最推荐）
 
-使用一键安装脚本，自动完成所有配置：
+使用统一的智能脚本，自动检测是首次安装还是更新：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/setup.sh | sudo bash
+```
+
+智能脚本会：
+- **自动检测**是否已有安装
+- **首次安装**：克隆项目并完成全部配置
+- **已有安装**：保留配置文件并更新代码
+- 无需手动判断使用哪个脚本
+
+自定义安装目录：
+```bash
+curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/setup.sh | sudo INSTALL_DIR=/opt/deploy-manager bash
+```
+
+### 方法二：本地克隆安装
+
+如果你已经克隆了项目仓库：
 
 ```bash
 # 克隆项目
@@ -45,23 +64,6 @@ sudo bash deploy.sh
 - 创建虚拟环境并安装 Python 依赖
 - 配置 systemd 服务
 - 自动启动应用
-
-### 方法二：从网络直接安装（首次安装）
-
-⚠️ **注意**: 此命令仅用于**首次安装**。如果已经安装，请使用更新命令！
-
-一行命令完成安装，脚本会自动克隆到临时目录，安装后清理：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/install.sh | sudo bash
-```
-
-如果检测到已有安装，脚本会提示你使用更新命令而不是重新安装。
-
-自定义安装目录：
-```bash
-curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/install.sh | sudo INSTALL_DIR=/opt/deploy-manager bash
-```
 
 ### 方法三：手动安装
 
@@ -164,24 +166,27 @@ http://your-server-ip:6666
 ## 系统更新
 
 ⚠️ **重要提示**:
-- **首次安装**使用 `install.sh`
-- **已有安装的更新**使用 `update.sh` 或 Web 界面
-- **绝对不要**用 `install.sh` 来更新，会删除所有配置！
+- **推荐使用** `setup.sh` 统一脚本（自动检测安装/更新模式）
+- **已有安装**也可使用 `update.sh` 或 Web 界面
+- **绝对不要**手动运行 `install.sh` 来更新，会删除所有配置！
 
-### 方法一：Web 界面更新（最推荐）
+### 方法一：智能更新脚本（最推荐）
+
+使用统一的 setup.sh 脚本，自动检测并执行更新：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/setup.sh | sudo bash
+```
+
+脚本会自动检测到已有安装并执行更新流程，无需担心配置丢失。
+
+### 方法二：Web 界面更新
 
 1. 访问 `http://服务器IP:6666`
 2. 点击"查看系统信息"
 3. 查看版本信息和更新状态
 4. 如果有更新，点击"立即更新"按钮
 5. 等待更新完成后刷新页面
-
-### 方法二：一键命令行更新
-
-```bash
-# 从网络直接更新（推荐）
-curl -fsSL https://raw.githubusercontent.com/SundayDX/deployTool/main/quickupdate.sh | sudo bash
-```
 
 ### 方法三：本地命令行更新
 
