@@ -86,11 +86,37 @@ if [ -d "$INSTALL_DIR" ]; then
     fi
 fi
 
+# 保存当前目录
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # 复制文件到安装目录
 echo "  复制文件到 $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
-cp -r ./* "$INSTALL_DIR/" 2>/dev/null || true
+
+# 使用更可靠的复制方法
+if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+    echo "  从 $SCRIPT_DIR 复制文件..."
+    cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/" 2>/dev/null || true
+    # 复制隐藏文件（如 .gitignore）
+    cp -r "$SCRIPT_DIR"/.[!.]* "$INSTALL_DIR/" 2>/dev/null || true
+else
+    echo "  安装目录与脚本目录相同，跳过复制"
+fi
+
 chown -R $ACTUAL_USER:$ACTUAL_USER "$INSTALL_DIR"
+
+# 验证关键文件
+if [ ! -f "$INSTALL_DIR/requirements.txt" ]; then
+    echo "错误: requirements.txt 未找到，文件复制可能失败"
+    exit 1
+fi
+
+if [ ! -f "$INSTALL_DIR/app.py" ]; then
+    echo "错误: app.py 未找到，文件复制可能失败"
+    exit 1
+fi
+
+echo "  文件复制完成"
 
 # 创建虚拟环境和安装依赖
 echo ""
@@ -99,7 +125,7 @@ echo "[4/6] 创建虚拟环境并安装 Python 依赖..."
 cd "$INSTALL_DIR"
 sudo -u $ACTUAL_USER python3 -m venv venv
 sudo -u $ACTUAL_USER "$INSTALL_DIR/venv/bin/pip" install --upgrade pip
-sudo -u $ACTUAL_USER "$INSTALL_DIR/venv/bin/pip" install -r requirements.txt
+sudo -u $ACTUAL_USER "$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
 
 echo "  Python 依赖安装完成"
 
