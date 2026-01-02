@@ -394,5 +394,61 @@ def delete_project(project_id):
     else:
         return jsonify({'success': False, 'message': '保存失败'}), 500
 
+@app.route('/api/system/update', methods=['POST'])
+def system_update():
+    """执行系统更新"""
+    # 获取脚本目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    update_script = os.path.join(script_dir, 'update.sh')
+
+    if not os.path.exists(update_script):
+        return jsonify({'success': False, 'message': '更新脚本不存在'}), 404
+
+    try:
+        # 在后台执行更新脚本
+        # 使用 nohup 确保即使主进程退出也能继续执行
+        subprocess.Popen(
+            ['sudo', 'bash', update_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+
+        return jsonify({
+            'success': True,
+            'message': '更新已开始，服务将在几秒钟后重启。请稍后刷新页面。'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'启动更新失败: {str(e)}'}), 500
+
+@app.route('/api/system/version', methods=['GET'])
+def get_version():
+    """获取当前版本信息"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    try:
+        # 获取 git 信息
+        branch = run_command('git branch --show-current', cwd=script_dir)
+        commit = run_command('git log -1 --pretty=format:"%h - %s (%ar)"', cwd=script_dir)
+        remote_status = run_command('git fetch origin && git rev-list --count HEAD..origin/main', cwd=script_dir)
+
+        # 检查是否有更新
+        behind_count = 0
+        if remote_status['success']:
+            try:
+                behind_count = int(remote_status['stdout'].strip())
+            except:
+                behind_count = 0
+
+        return jsonify({
+            'success': True,
+            'branch': branch['stdout'].strip() if branch['success'] else 'unknown',
+            'commit': commit['stdout'].strip() if commit['success'] else 'unknown',
+            'behind_count': behind_count,
+            'has_update': behind_count > 0
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取版本信息失败: {str(e)}'}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=6666, debug=True)

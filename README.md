@@ -157,6 +157,50 @@ http://your-server-ip:6666
 4. 安全设置选择"加签"（可选）
 5. 复制 Webhook 地址到配置中
 
+## 系统更新
+
+### 方法一：Web 界面更新（推荐）
+
+1. 点击"查看系统信息"
+2. 查看版本信息和更新状态
+3. 如果有更新，点击"立即更新"按钮
+4. 等待更新完成后刷新页面
+
+### 方法二：命令行更新
+
+```bash
+# 进入安装目录
+cd ~/deploy-manager  # 或你的安装目录
+
+# 执行更新脚本
+sudo bash update.sh
+```
+
+### 方法三：手动更新
+
+```bash
+# 进入安装目录
+cd ~/deploy-manager
+
+# 备份配置文件
+cp projects.json projects.json.bak
+cp settings.json settings.json.bak
+
+# 拉取最新代码
+git pull origin main
+
+# 更新依赖
+source venv/bin/activate
+pip install -r requirements.txt --upgrade
+
+# 恢复配置文件（如果被覆盖）
+mv projects.json.bak projects.json
+mv settings.json.bak settings.json
+
+# 重启服务
+sudo systemctl restart deploy-manager
+```
+
 ## 服务管理
 
 如果使用自动部署脚本安装，系统会自动配置为 systemd 服务。

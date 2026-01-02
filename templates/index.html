@@ -533,11 +533,34 @@
             modal.style.display = 'block';
 
             try {
-                const response = await fetch('/api/system/info');
-                const result = await response.json();
+                const [infoResponse, versionResponse] = await Promise.all([
+                    fetch('/api/system/info'),
+                    fetch('/api/system/version')
+                ]);
+
+                const result = await infoResponse.json();
+                const versionResult = await versionResponse.json();
 
                 if (result.success) {
-                    content.innerHTML = `
+                    let versionHtml = '';
+                    if (versionResult.success) {
+                        const updateBadge = versionResult.has_update
+                            ? `<span style="background: #f44336; color: white; padding: 4px 8px; border-radius: 4px; margin-left: 10px;">有 ${versionResult.behind_count} 个更新</span>`
+                            : `<span style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; margin-left: 10px;">已是最新</span>`;
+
+                        versionHtml = `
+                            <div style="margin-bottom: 20px; background: #e3f2fd; padding: 15px; border-radius: 6px;">
+                                <h3>版本信息 ${updateBadge}</h3>
+                                <p style="margin: 10px 0;"><strong>分支:</strong> ${versionResult.branch}</p>
+                                <p style="margin: 10px 0;"><strong>版本:</strong> ${versionResult.commit}</p>
+                                ${versionResult.has_update ? `
+                                    <button class="btn btn-deploy" onclick="updateSystem()" style="margin-top: 10px;">立即更新</button>
+                                ` : ''}
+                            </div>
+                        `;
+                    }
+
+                    content.innerHTML = versionHtml + `
                         <div style="margin-bottom: 20px;">
                             <h3>磁盘使用情况</h3>
                             <pre style="background: #f5f5f5; padding: 15px; border-radius: 6px; overflow-x: auto;">${result.disk}</pre>
@@ -564,6 +587,34 @@
                 }
             } catch (error) {
                 content.innerHTML = '<p style="color: red;">获取系统信息失败: ' + error.message + '</p>';
+            }
+        }
+
+        // 更新系统
+        async function updateSystem() {
+            if (!confirm('确定要更新系统吗？更新过程中服务将短暂中断。')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/system/update', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showAlert(result.message, 'success');
+                    closeModal('systemModal');
+
+                    // 10秒后自动刷新页面
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 10000);
+                } else {
+                    showAlert('更新失败: ' + result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('更新失败: ' + error.message, 'error');
             }
         }
 
