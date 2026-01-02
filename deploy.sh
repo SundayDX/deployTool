@@ -31,11 +31,16 @@ echo "  运行用户: $ACTUAL_USER"
 echo "  服务端口: $SERVICE_PORT"
 echo ""
 
-read -p "是否继续安装? (y/n) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "安装已取消"
-    exit 0
+# 检查是否为非交互式环境或设置了自动确认
+if [ -t 0 ] && [ -z "$AUTO_CONFIRM" ]; then
+    read -p "是否继续安装? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "安装已取消"
+        exit 0
+    fi
+else
+    echo "自动确认模式，继续安装..."
 fi
 
 echo ""
@@ -73,16 +78,23 @@ echo "[3/6] 准备安装目录..."
 
 if [ -d "$INSTALL_DIR" ]; then
     echo "  检测到已存在的安装目录"
-    read -p "是否删除现有安装并重新安装? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "  停止现有服务..."
-        systemctl stop deploy-manager 2>/dev/null || true
-        echo "  删除现有目录..."
-        rm -rf "$INSTALL_DIR"
+
+    if [ -t 0 ] && [ -z "$AUTO_CONFIRM" ]; then
+        read -p "是否删除现有安装并重新安装? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "  停止现有服务..."
+            systemctl stop deploy-manager 2>/dev/null || true
+            echo "  删除现有目录..."
+            rm -rf "$INSTALL_DIR"
+        else
+            echo "  安装已取消"
+            exit 0
+        fi
     else
-        echo "  安装已取消"
-        exit 0
+        echo "  自动确认模式：删除现有安装..."
+        systemctl stop deploy-manager 2>/dev/null || true
+        rm -rf "$INSTALL_DIR"
     fi
 fi
 

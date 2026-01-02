@@ -59,14 +59,15 @@ echo ""
 echo "目标安装目录: $INSTALL_DIR"
 echo ""
 
-# 设置 INSTALL_DIR 环境变量并执行部署脚本
+# 设置环境变量并执行部署脚本
 export INSTALL_DIR="$INSTALL_DIR"
+export AUTO_CONFIRM="1"
 
 # 检查是否为 root 用户
 if [ "$EUID" -eq 0 ]; then
     bash deploy.sh
 else
-    sudo INSTALL_DIR="$INSTALL_DIR" bash deploy.sh
+    sudo INSTALL_DIR="$INSTALL_DIR" AUTO_CONFIRM="1" bash deploy.sh
 fi
 
 echo ""
