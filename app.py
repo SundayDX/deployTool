@@ -548,6 +548,59 @@ def clean_project(project_id):
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
+@app.route('/api/custom-command/<int:project_id>', methods=['POST'])
+def execute_custom_command(project_id):
+    """执行用户自定义命令（实时流式输出）"""
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    project = projects[project_id]
+    project_path = project['path']
+
+    if not os.path.exists(project_path):
+        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+
+    # 获取用户输入的命令
+    data = request.get_json()
+    if not data or 'command' not in data:
+        return jsonify({'success': False, 'message': '未提供命令'}), 400
+
+    custom_command = data['command'].strip()
+    if not custom_command:
+        return jsonify({'success': False, 'message': '命令不能为空'}), 400
+
+    # 安全检查：禁止一些危险命令
+    dangerous_patterns = ['rm -rf /', 'mkfs', 'dd if=', ':(){:|:&};:', 'fork bomb']
+    for pattern in dangerous_patterns:
+        if pattern in custom_command.lower():
+            return jsonify({'success': False, 'message': f'检测到危险命令，已阻止执行'}), 403
+
+    def generate():
+        """生成器函数，用于流式输出"""
+        # 发送开始信号
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name'], 'command': custom_command})}\n\n"
+
+        # 执行自定义命令
+        yield f"data: {json.dumps({'type': 'step', 'step': f'执行: {custom_command}', 'status': 'running'})}\n\n"
+
+        cmd_return_code = 0
+        for item_type, content in run_command_stream(custom_command, cwd=project_path):
+            if item_type == 'output':
+                yield f"data: {json.dumps({'type': 'output', 'step': custom_command, 'line': content.rstrip()})}\n\n"
+            elif item_type == 'returncode':
+                cmd_return_code = content
+
+        if cmd_return_code == 0:
+            yield f"data: {json.dumps({'type': 'step', 'step': custom_command, 'status': 'success'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': '命令执行完成'})}\n\n"
+        else:
+            yield f"data: {json.dumps({'type': 'step', 'step': custom_command, 'status': 'error'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': f'命令执行失败 (退出码: {cmd_return_code})'})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
 @app.route('/api/status/<int:project_id>', methods=['GET'])
 def get_project_status(project_id):
     """获取项目状态"""

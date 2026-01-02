@@ -215,6 +215,72 @@
             transform: scale(1);
         }
 
+        .btn-advanced {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-advanced:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-execute {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            min-width: 80px;
+        }
+
+        .btn-execute:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(17, 153, 142, 0.4);
+        }
+
+        .btn-execute:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
+        .advanced-panel {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 6px;
+            display: none;
+            border-left: 4px solid #667eea;
+        }
+
+        .advanced-panel.show {
+            display: block;
+        }
+
+        .command-input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .command-input {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            transition: border-color 0.3s;
+        }
+
+        .command-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .command-hints {
+            color: #666;
+            font-size: 0.85em;
+        }
+
         .status-info {
             margin-top: 15px;
             padding: 15px;
@@ -497,6 +563,18 @@
                         <button class="btn btn-deploy" onclick="deployProject(${index})">
                             <span id="deploy-text-${index}">一键部署</span>
                         </button>
+                        <button class="btn btn-advanced" onclick="toggleAdvanced(${index})">高级</button>
+                    </div>
+                    <div class="advanced-panel" id="advanced-${index}">
+                        <div class="command-input-group">
+                            <input type="text" id="custom-command-${index}" class="command-input" placeholder="输入自定义命令，如: docker logs -f container_name" />
+                            <button class="btn btn-execute" onclick="executeCustomCommand(${index})">
+                                <span id="execute-text-${index}">执行</span>
+                            </button>
+                        </div>
+                        <div class="command-hints">
+                            <small>提示: 命令将在项目目录下执行。危险命令会被自动拦截。</small>
+                        </div>
                     </div>
                     <div class="status-info" id="status-${index}">
                         <div id="status-content-${index}">加载中...</div>
@@ -715,6 +793,157 @@
                 return;
             }
             executeStreamAction(projectId, 'clean', 'clean-text', 'Clean');
+        }
+
+        // 切换高级面板显示
+        function toggleAdvanced(projectId) {
+            const panel = document.getElementById(`advanced-${projectId}`);
+            panel.classList.toggle('show');
+
+            // 如果打开了面板，聚焦到输入框
+            if (panel.classList.contains('show')) {
+                document.getElementById(`custom-command-${projectId}`).focus();
+            }
+        }
+
+        // 执行自定义命令
+        async function executeCustomCommand(projectId) {
+            const commandInput = document.getElementById(`custom-command-${projectId}`);
+            const command = commandInput.value.trim();
+
+            if (!command) {
+                showAlert('请输入命令', 'error');
+                return;
+            }
+
+            const btn = document.querySelector(`#execute-text-${projectId}`).parentElement;
+            const originalText = document.querySelector(`#execute-text-${projectId}`).textContent;
+
+            btn.disabled = true;
+            document.querySelector(`#execute-text-${projectId}`).innerHTML = '<span class="loading"></span> 执行中...';
+
+            // 打开日志模态窗口
+            const modal = document.getElementById('logModal');
+            const content = document.getElementById('logContent');
+            content.innerHTML = `<div class="log-entry"><h3>准备执行自定义命令...</h3><pre>${command}</pre></div>`;
+            modal.style.display = 'block';
+
+            try {
+                // 发起POST请求，包含命令
+                const response = await fetch(`/api/custom-command/${projectId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ command: command })
+                });
+
+                // 检查是否返回错误
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    showAlert(errorData.message || '命令执行失败', 'error');
+                    btn.disabled = false;
+                    document.querySelector(`#execute-text-${projectId}`).textContent = originalText;
+                    return;
+                }
+
+                // 使用 EventSource 接收实时流式数据
+                const eventSource = new EventSource(`/api/custom-command/${projectId}?command=${encodeURIComponent(command)}`);
+                let currentStep = null;
+                let currentStepDiv = null;
+                let currentOutputPre = null;
+
+                // 由于SSE不支持POST，我们需要修改策略
+                // 实际上应该先POST再用一个session ID来获取流，但为了简化，我们改用不同的方法
+
+                // 关闭EventSource，因为我们会用fetch
+                eventSource.close();
+
+                // 重新使用fetch但读取流
+                const streamResponse = await fetch(`/api/custom-command/${projectId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ command: command })
+                });
+
+                const reader = streamResponse.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.substring(6));
+
+                            if (data.type === 'start') {
+                                content.innerHTML = `<div class="log-entry"><h3>执行命令: ${data.command}</h3></div>`;
+                            } else if (data.type === 'step') {
+                                if (data.status === 'running') {
+                                    currentStep = data.step;
+                                    currentStepDiv = document.createElement('div');
+                                    currentStepDiv.className = 'log-entry';
+                                    currentStepDiv.innerHTML = `
+                                        <h3><span class="loading"></span> ${data.step}...</h3>
+                                        <pre class="log-output"></pre>
+                                    `;
+                                    content.appendChild(currentStepDiv);
+                                    currentOutputPre = currentStepDiv.querySelector('.log-output');
+                                    content.scrollTop = content.scrollHeight;
+                                } else if (data.status === 'success') {
+                                    if (currentStepDiv) {
+                                        currentStepDiv.className = 'log-entry success';
+                                        currentStepDiv.querySelector('h3').innerHTML = `✓ ${data.step}`;
+                                    }
+                                } else if (data.status === 'error') {
+                                    if (currentStepDiv) {
+                                        currentStepDiv.className = 'log-entry error';
+                                        currentStepDiv.querySelector('h3').innerHTML = `✗ ${data.step}`;
+                                    }
+                                }
+                            } else if (data.type === 'output') {
+                                if (currentOutputPre) {
+                                    currentOutputPre.textContent += data.line + '\n';
+                                    content.scrollTop = content.scrollHeight;
+                                }
+                            } else if (data.type === 'complete') {
+                                if (data.success) {
+                                    showAlert(data.message, 'success');
+                                    const completeDiv = document.createElement('div');
+                                    completeDiv.className = 'log-entry success';
+                                    completeDiv.innerHTML = `<h3>✓ 命令执行完成</h3><p>${data.message}</p>`;
+                                    content.appendChild(completeDiv);
+
+                                    // 清空输入框
+                                    commandInput.value = '';
+                                } else {
+                                    showAlert(data.message, 'error');
+                                    const completeDiv = document.createElement('div');
+                                    completeDiv.className = 'log-entry error';
+                                    completeDiv.innerHTML = `<h3>✗ 命令执行失败</h3><p>${data.message}</p>`;
+                                    content.appendChild(completeDiv);
+                                }
+
+                                btn.disabled = false;
+                                document.querySelector(`#execute-text-${projectId}`).textContent = originalText;
+                                content.scrollTop = content.scrollHeight;
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                console.error('Custom command error:', error);
+                showAlert('命令执行出错: ' + error.message, 'error');
+                btn.disabled = false;
+                document.querySelector(`#execute-text-${projectId}`).textContent = originalText;
+            }
         }
 
         // 切换状态显示
