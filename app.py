@@ -1,10 +1,11 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 import subprocess
 import os
 import json
 from datetime import datetime
 import threading
 import requests
+import time
 
 app = Flask(__name__)
 
@@ -122,6 +123,50 @@ def run_command(command, cwd=None):
             'stderr': str(e),
             'returncode': -1
         }
+
+def run_command_stream(command, cwd=None):
+    """执行命令并实时流式返回输出（生成器）"""
+    try:
+        # 获取当前脚本目录（安装目录）
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # 构建环境变量
+        env = {
+            **os.environ,
+            'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+            # 为 git 命令添加 safe.directory 配置，避免 dubious ownership 错误
+            'GIT_CONFIG_COUNT': '1',
+            'GIT_CONFIG_KEY_0': 'safe.directory',
+            'GIT_CONFIG_VALUE_0': script_dir
+        }
+
+        # 使用 Popen 来实时获取输出
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # 合并 stderr 到 stdout
+            text=True,
+            executable='/bin/bash',
+            env=env,
+            bufsize=1,  # 行缓冲
+            universal_newlines=True
+        )
+
+        # 实时读取输出
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                yield line
+
+        process.stdout.close()
+        return_code = process.wait()
+
+        if return_code != 0:
+            yield f"\n[错误] 命令退出码: {return_code}\n"
+
+    except Exception as e:
+        yield f"\n[异常] {str(e)}\n"
 
 @app.route('/')
 def index():
@@ -241,6 +286,99 @@ def deploy_project(project_id):
         'message': '部署成功',
         'logs': logs
     })
+
+@app.route('/api/deploy-stream/<int:project_id>', methods=['POST'])
+def deploy_project_stream(project_id):
+    """部署指定项目（实时流式输出）"""
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    project = projects[project_id]
+    project_path = project['path']
+
+    if not os.path.exists(project_path):
+        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+
+    def generate():
+        """生成器函数，用于流式输出"""
+        overall_success = True
+        error_message = ''
+
+        # 发送开始信号
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name']})}\n\n"
+
+        # 执行 git pull
+        yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'running'})}\n\n"
+
+        for line in run_command_stream('git pull', cwd=project_path):
+            yield f"data: {json.dumps({'type': 'output', 'step': 'git pull', 'line': line.rstrip()})}\n\n"
+
+        # 检查 git pull 是否成功（简单判断）
+        git_check = run_command('git status', cwd=project_path)
+        if git_check['returncode'] != 0:
+            overall_success = False
+            error_message = 'Git pull 可能失败'
+            yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'error'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'success'})}\n\n"
+
+        # 执行 docker compose build
+        yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'running'})}\n\n"
+
+        build_success = True
+        for line in run_command_stream('docker compose build', cwd=project_path):
+            yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose build', 'line': line.rstrip()})}\n\n"
+            # 检测错误关键词
+            if 'ERROR' in line.upper() or 'FAILED' in line.upper():
+                build_success = False
+
+        # 验证 build 结果
+        if not build_success:
+            overall_success = False
+            error_message = 'Docker compose build 失败'
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'error'})}\n\n"
+            send_dingtalk_notification(
+                f"项目部署失败: {project['name']}",
+                f"Docker compose build 失败",
+                is_success=False
+            )
+            yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'success'})}\n\n"
+
+        # 执行 docker compose down && docker compose up -d（重启服务）
+        if project.get('auto_restart', True):
+            # docker compose down
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'running'})}\n\n"
+
+            for line in run_command_stream('docker compose down', cwd=project_path):
+                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose down', 'line': line.rstrip()})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'success'})}\n\n"
+
+            # docker compose up -d
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'running'})}\n\n"
+
+            for line in run_command_stream('docker compose up -d', cwd=project_path):
+                yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose up -d', 'line': line.rstrip()})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'success'})}\n\n"
+
+        # 发送成功通知
+        send_dingtalk_notification(
+            f"项目部署成功: {project['name']}",
+            f"项目已成功更新并重启",
+            is_success=True
+        )
+
+        yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': '部署成功'})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 @app.route('/api/status/<int:project_id>', methods=['GET'])
 def get_project_status(project_id):
