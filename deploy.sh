@@ -108,9 +108,17 @@ mkdir -p "$INSTALL_DIR"
 # 使用更可靠的复制方法
 if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
     echo "  从 $SCRIPT_DIR 复制文件..."
+
+    # 复制所有文件（包括隐藏文件）
+    shopt -s dotglob
     cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/" 2>/dev/null || true
-    # 复制隐藏文件（如 .gitignore）
-    cp -r "$SCRIPT_DIR"/.[!.]* "$INSTALL_DIR/" 2>/dev/null || true
+    shopt -u dotglob
+
+    # 确保 .git 目录被复制
+    if [ -d "$SCRIPT_DIR/.git" ]; then
+        echo "  复制 .git 目录..."
+        cp -r "$SCRIPT_DIR/.git" "$INSTALL_DIR/" 2>/dev/null || true
+    fi
 else
     echo "  安装目录与脚本目录相同，跳过复制"
 fi
@@ -129,6 +137,12 @@ if [ ! -f "$INSTALL_DIR/app.py" ]; then
 fi
 
 echo "  文件复制完成"
+
+# 配置 git 安全目录（避免 dubious ownership 错误）
+if [ -d "$INSTALL_DIR/.git" ]; then
+    echo "  配置 Git 安全目录..."
+    sudo -u $ACTUAL_USER git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
+fi
 
 # 创建虚拟环境和安装依赖
 echo ""

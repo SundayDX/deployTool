@@ -276,11 +276,11 @@ def get_system_info():
 
     return jsonify({
         'success': True,
-        'disk': disk_result['stdout'],
-        'memory': memory_result['stdout'],
-        'cpu': cpu_result['stdout'],
-        'uptime': uptime_result['stdout'],
-        'docker_disk': docker_disk_result['stdout']
+        'disk': disk_result['stdout'] if disk_result['success'] else f"错误: {disk_result['stderr']}",
+        'memory': memory_result['stdout'] if memory_result['success'] else f"错误: {memory_result['stderr']}",
+        'cpu': cpu_result['stdout'] if cpu_result['success'] else f"错误: {cpu_result['stderr']}",
+        'uptime': uptime_result['stdout'] if uptime_result['success'] else f"错误: {uptime_result['stderr']}",
+        'docker_disk': docker_disk_result['stdout'] if docker_disk_result['success'] else f"错误: {docker_disk_result['stderr']}"
     })
 
 @app.route('/api/settings', methods=['GET'])
