@@ -126,6 +126,102 @@ def run_command(command, cwd=None):
             'returncode': -1
         }
 
+def run_ssh_command(command, ssh_config, cwd=None):
+    """通过SSH执行命令并返回输出（非流式）"""
+    ssh_client = None
+    try:
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        host = ssh_config.get('host')
+        port = ssh_config.get('port', 22)
+        user = ssh_config.get('user', 'root')
+        key_file = ssh_config.get('key_file')
+        password = ssh_config.get('password')
+
+        if not host:
+            return {
+                'success': False,
+                'stdout': '',
+                'stderr': 'SSH host not configured',
+                'returncode': -1
+            }
+
+        # 连接参数
+        connect_kwargs = {
+            'hostname': host,
+            'port': port,
+            'username': user,
+            'timeout': 10
+        }
+
+        # 认证方式
+        if key_file and os.path.exists(key_file):
+            connect_kwargs['key_filename'] = key_file
+        elif password:
+            connect_kwargs['password'] = password
+        else:
+            # 尝试使用默认密钥
+            default_key = os.path.expanduser('~/.ssh/id_rsa')
+            if os.path.exists(default_key):
+                connect_kwargs['key_filename'] = default_key
+
+        ssh_client.connect(**connect_kwargs)
+
+        # 如果指定了工作目录，添加 cd 命令
+        if cwd:
+            command = f"cd {cwd} && {command}"
+
+        stdin, stdout, stderr = ssh_client.exec_command(command, get_pty=False, timeout=30)
+
+        stdout_data = stdout.read().decode('utf-8')
+        stderr_data = stderr.read().decode('utf-8')
+        return_code = stdout.channel.recv_exit_status()
+
+        return {
+            'success': return_code == 0,
+            'stdout': stdout_data,
+            'stderr': stderr_data,
+            'returncode': return_code
+        }
+
+    except socket.timeout:
+        return {
+            'success': False,
+            'stdout': '',
+            'stderr': 'SSH connection timeout',
+            'returncode': -1
+        }
+    except paramiko.AuthenticationException:
+        return {
+            'success': False,
+            'stdout': '',
+            'stderr': 'SSH authentication failed',
+            'returncode': -1
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'stdout': '',
+            'stderr': f'SSH error: {str(e)}',
+            'returncode': -1
+        }
+    finally:
+        if ssh_client:
+            ssh_client.close()
+
+def execute_command(command, project, cwd=None):
+    """根据项目配置选择本地或SSH执行（非流式）"""
+    ssh_config = project.get('ssh', {})
+    actual_cwd = cwd if cwd else project.get('path')
+
+    if ssh_config.get('enabled', False):
+        # SSH模式
+        return run_ssh_command(command, ssh_config, actual_cwd)
+    else:
+        # 本地模式
+        return run_command(command, actual_cwd)
+
 def run_command_stream(command, cwd=None):
     """执行命令并实时流式返回输出（生成器），最后一行返回退出码"""
     return_code = -1
@@ -715,13 +811,14 @@ def get_project_status(project_id):
     project = projects[project_id]
     project_path = project['path']
 
+    # 使用 execute_command 支持本地和SSH模式
     # 获取 git 状态
-    git_status = run_command('git status --short', cwd=project_path)
-    git_branch = run_command('git branch --show-current', cwd=project_path)
-    git_log = run_command('git log -1 --pretty=format:"%h - %an, %ar : %s"', cwd=project_path)
+    git_status = execute_command('git status --short', project, cwd=project_path)
+    git_branch = execute_command('git branch --show-current', project, cwd=project_path)
+    git_log = execute_command('git log -1 --pretty=format:"%h - %an, %ar : %s"', project, cwd=project_path)
 
     # 获取 docker 容器状态
-    docker_ps = run_command('docker compose ps', cwd=project_path)
+    docker_ps = execute_command('docker compose ps', project, cwd=project_path)
 
     return jsonify({
         'success': True,
