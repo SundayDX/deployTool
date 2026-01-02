@@ -990,44 +990,85 @@ def get_project_status(project_id):
     # 获取 docker 容器状态
     docker_ps = execute_command('docker compose ps', project, cwd=project_path)
 
-    # 获取 docker compose 配置的镜像
-    docker_config = execute_command('docker compose config --services', project, cwd=project_path)
-
-    # 获取镜像构建时间
+    # 获取镜像构建时间 - 使用docker compose images命令更可靠
     images_info = []
-    if docker_config['success'] and docker_config['stdout'].strip():
-        services = docker_config['stdout'].strip().split('\n')
-        for service in services:
-            # 获取服务对应的镜像名称
-            image_cmd = f'docker compose config | grep -A 10 "^  {service}:" | grep "image:" | head -1 || echo ""'
-            image_result = execute_command(image_cmd, project, cwd=project_path)
 
-            # 如果没有指定image，则使用项目名_service名作为镜像名
-            if not image_result['stdout'].strip() or 'image:' not in image_result['stdout']:
-                # 从docker compose ps获取实际镜像名
-                ps_image_cmd = f"docker compose ps {service} --format json 2>/dev/null | grep -o '\"Image\":\"[^\"]*\"' | cut -d'\"' -f4 || echo ''"
-                ps_image_result = execute_command(ps_image_cmd, project, cwd=project_path)
+    # 尝试使用 docker compose images 命令获取镜像信息
+    images_cmd = 'docker compose images --format json 2>/dev/null'
+    images_result = execute_command(images_cmd, project, cwd=project_path)
 
-                if ps_image_result['success'] and ps_image_result['stdout'].strip():
-                    image_name = ps_image_result['stdout'].strip()
-                else:
-                    # 使用默认命名规则：目录名_服务名
-                    project_name = os.path.basename(project_path)
-                    image_name = f"{project_name}_{service}"
-            else:
-                image_name = image_result['stdout'].split('image:')[-1].strip()
+    if images_result['success'] and images_result['stdout'].strip():
+        # 解析JSON输出
+        try:
+            import json as json_lib
+            lines = images_result['stdout'].strip().split('\n')
+            for line in lines:
+                if line.strip():
+                    try:
+                        img_data = json_lib.loads(line)
+                        service = img_data.get('Service', img_data.get('Container', ''))
+                        repository = img_data.get('Repository', '')
+                        tag = img_data.get('Tag', '')
 
-            # 获取镜像创建时间
-            inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" {image_name} 2>/dev/null || echo "未找到镜像"'
-            inspect_result = execute_command(inspect_cmd, project, cwd=project_path)
+                        if repository and tag:
+                            image_name = f"{repository}:{tag}"
+                        elif repository:
+                            image_name = repository
+                        else:
+                            continue
 
-            if inspect_result['success'] and inspect_result['stdout'].strip() and '未找到镜像' not in inspect_result['stdout']:
-                created_time = inspect_result['stdout'].strip()
-                images_info.append({
-                    'service': service,
-                    'image': image_name,
-                    'created': created_time
-                })
+                        # 获取镜像创建时间
+                        inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" "{image_name}" 2>/dev/null'
+                        inspect_result = execute_command(inspect_cmd, project, cwd=project_path)
+
+                        if inspect_result['success'] and inspect_result['stdout'].strip():
+                            created_time = inspect_result['stdout'].strip()
+                            images_info.append({
+                                'service': service,
+                                'image': image_name,
+                                'created': created_time
+                            })
+                    except json_lib.JSONDecodeError:
+                        continue
+        except Exception as e:
+            pass
+
+    # 如果docker compose images不可用，使用备用方法
+    if not images_info:
+        docker_ps_cmd = 'docker compose ps --format json 2>/dev/null'
+        ps_result = execute_command(docker_ps_cmd, project, cwd=project_path)
+
+        if ps_result['success'] and ps_result['stdout'].strip():
+            try:
+                import json as json_lib
+                lines = ps_result['stdout'].strip().split('\n')
+                processed_images = set()  # 避免重复
+
+                for line in lines:
+                    if line.strip():
+                        try:
+                            container_data = json_lib.loads(line)
+                            service = container_data.get('Service', container_data.get('Name', ''))
+                            image_name = container_data.get('Image', '')
+
+                            if image_name and image_name not in processed_images:
+                                processed_images.add(image_name)
+
+                                # 获取镜像创建时间
+                                inspect_cmd = f'docker inspect --format="{{{{.Created}}}}" "{image_name}" 2>/dev/null'
+                                inspect_result = execute_command(inspect_cmd, project, cwd=project_path)
+
+                                if inspect_result['success'] and inspect_result['stdout'].strip():
+                                    created_time = inspect_result['stdout'].strip()
+                                    images_info.append({
+                                        'service': service,
+                                        'image': image_name,
+                                        'created': created_time
+                                    })
+                        except json_lib.JSONDecodeError:
+                            continue
+            except Exception as e:
+                pass
 
     return jsonify({
         'success': True,
