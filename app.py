@@ -662,19 +662,24 @@ def restart_project(project_id):
     project = projects[project_id]
     project_path = project['path']
 
-    if not os.path.exists(project_path):
-        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+    # SSH模式下不检查本地路径
+    if not project.get('ssh', {}).get('enabled', False):
+        if not os.path.exists(project_path):
+            return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
 
     def generate():
         """生成器函数，用于流式输出"""
+        ssh_mode = project.get('ssh', {}).get('enabled', False)
+        mode_text = f" (SSH: {project.get('ssh', {}).get('host', '')})" if ssh_mode else " (本地)"
+
         # 发送开始信号
-        yield f"data: {json.dumps({'type': 'start', 'project': project['name']})}\n\n"
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
 
         # docker compose down
         yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose down', 'status': 'running'})}\n\n"
 
         down_return_code = 0
-        for item_type, content in run_command_stream('docker compose down', cwd=project_path):
+        for item_type, content in execute_command_stream('docker compose down', project, cwd=project_path):
             if item_type == 'output':
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose down', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
@@ -689,7 +694,7 @@ def restart_project(project_id):
         yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'running'})}\n\n"
 
         up_return_code = 0
-        for item_type, content in run_command_stream('docker compose up -d', cwd=project_path):
+        for item_type, content in execute_command_stream('docker compose up -d', project, cwd=project_path):
             if item_type == 'output':
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose up -d', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
@@ -715,19 +720,24 @@ def clean_project(project_id):
     project = projects[project_id]
     project_path = project['path']
 
-    if not os.path.exists(project_path):
-        return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
+    # SSH模式下不检查本地路径
+    if not project.get('ssh', {}).get('enabled', False):
+        if not os.path.exists(project_path):
+            return jsonify({'success': False, 'message': f'项目路径不存在: {project_path}'}), 404
 
     def generate():
         """生成器函数，用于流式输出"""
+        ssh_mode = project.get('ssh', {}).get('enabled', False)
+        mode_text = f" (SSH: {project.get('ssh', {}).get('host', '')})" if ssh_mode else " (本地)"
+
         # 发送开始信号
-        yield f"data: {json.dumps({'type': 'start', 'project': project['name']})}\n\n"
+        yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
 
         # docker system prune
         yield f"data: {json.dumps({'type': 'step', 'step': 'docker system prune -f', 'status': 'running'})}\n\n"
 
         prune_return_code = 0
-        for item_type, content in run_command_stream('docker system prune -af', cwd=project_path):
+        for item_type, content in execute_command_stream('docker system prune -af', project, cwd=project_path):
             if item_type == 'output':
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker system prune -f', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
