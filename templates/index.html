@@ -242,6 +242,16 @@
             transform: scale(1);
         }
 
+        .btn-logs {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .btn-logs:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4);
+        }
+
         .advanced-panel {
             margin-top: 15px;
             padding: 15px;
@@ -440,6 +450,16 @@
         </div>
     </div>
 
+    <div id="logsHistoryModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('logsHistoryModal')">&times;</span>
+            <h2 id="logsHistoryTitle">操作历史</h2>
+            <div id="logsHistoryContent" style="max-height: 600px; overflow-y: auto;">
+                <p style="color: #666;">加载中...</p>
+            </div>
+        </div>
+    </div>
+
     <div id="systemModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeModal('systemModal')">&times;</span>
@@ -597,6 +617,7 @@
                     </div>
                     <div class="button-group">
                         <button class="btn btn-status" onclick="toggleStatus(${index})">查看状态</button>
+                        <button class="btn btn-logs" onclick="viewProjectLogs(${index})">查看日志</button>
                         <button class="btn btn-deploy" onclick="deployProject(${index})">
                             <span id="deploy-text-${index}">一键部署</span>
                         </button>
@@ -1437,6 +1458,57 @@
         // 取消项目表单
         function cancelProjectForm() {
             document.getElementById('addProjectForm').style.display = 'none';
+        }
+
+        // 查看项目日志
+        async function viewProjectLogs(projectId) {
+            const modal = document.getElementById('logsHistoryModal');
+            const content = document.getElementById('logsHistoryContent');
+            const title = document.getElementById('logsHistoryTitle');
+
+            const project = projects[projectId];
+            title.textContent = `${project.name} - 操作历史`;
+
+            modal.style.display = 'block';
+            content.innerHTML = '<p style="color: #666;">加载中...</p>';
+
+            try {
+                const response = await fetch(`/api/logs/${projectId}`);
+                const data = await response.json();
+
+                if (data.success && data.logs.length > 0) {
+                    content.innerHTML = data.logs.map(log => {
+                        const statusColor = log.success ? '#4caf50' : '#f44336';
+                        const statusText = log.success ? '成功' : '失败';
+                        const sshBadge = log.ssh_mode ? `<span style="background: #667eea; color: white; padding: 2px 6px; border-radius: 3px; font-size: 12px; margin-left: 8px;">SSH: ${log.ssh_host}</span>` : '';
+
+                        return `
+                            <div style="border: 1px solid #ddd; border-radius: 6px; padding: 15px; margin-bottom: 15px; background: white;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <div>
+                                        <strong style="color: #333;">${log.operation}</strong>
+                                        ${sshBadge}
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <span style="color: #666; font-size: 14px;">${log.timestamp}</span>
+                                        <span style="color: ${statusColor}; font-weight: bold; background: ${statusColor}15; padding: 4px 12px; border-radius: 4px;">${statusText}</span>
+                                    </div>
+                                </div>
+                                ${log.output ? `
+                                    <details style="margin-top: 10px;">
+                                        <summary style="cursor: pointer; color: #667eea; font-weight: 500;">查看详细输出</summary>
+                                        <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; margin-top: 8px; overflow-x: auto; font-size: 12px; max-height: 300px; overflow-y: auto;">${log.output}</pre>
+                                    </details>
+                                ` : '<p style="color: #999; font-size: 14px; margin-top: 8px;">无输出</p>'}
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    content.innerHTML = '<p style="color: #666; text-align: center; padding: 40px;">暂无操作记录</p>';
+                }
+            } catch (error) {
+                content.innerHTML = `<p style="color: #f44336;">加载失败: ${error.message}</p>`;
+            }
         }
 
         // 关闭模态框

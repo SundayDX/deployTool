@@ -25,6 +25,7 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
 
 # Configuration files (user-specific, should not be overwritten)
 settings.json

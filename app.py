@@ -14,6 +14,7 @@ app = Flask(__name__)
 # 配置文件路径
 CONFIG_FILE = 'projects.json'
 SETTINGS_FILE = 'settings.json'
+LOGS_DIR = 'logs'
 
 def load_settings():
     """加载系统设置"""
@@ -60,6 +61,70 @@ def send_dingtalk_notification(title, message, is_success=True):
     except Exception as e:
         print(f"发送钉钉通知失败: {e}")
         return False
+
+def ensure_logs_dir():
+    """确保日志目录存在"""
+    if not os.path.exists(LOGS_DIR):
+        os.makedirs(LOGS_DIR)
+
+def save_operation_log(project_id, project_name, operation_type, success, output='', ssh_mode=False, ssh_host=''):
+    """保存操作日志"""
+    try:
+        ensure_logs_dir()
+
+        log_file = os.path.join(LOGS_DIR, f'project_{project_id}.json')
+
+        # 加载现有日志
+        logs = []
+        if os.path.exists(log_file):
+            with open(log_file, 'r', encoding='utf-8') as f:
+                logs = json.load(f)
+
+        # 添加新日志（限制输出长度）
+        max_output_length = 10000
+        truncated_output = output[:max_output_length] + '...(输出过长，已截断)' if len(output) > max_output_length else output
+
+        log_entry = {
+            'id': len(logs),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'project_name': project_name,
+            'operation': operation_type,
+            'success': success,
+            'output': truncated_output,
+            'ssh_mode': ssh_mode,
+            'ssh_host': ssh_host if ssh_mode else ''
+        }
+
+        logs.insert(0, log_entry)  # 最新的在前面
+
+        # 只保留最近100条日志
+        logs = logs[:100]
+
+        # 保存日志
+        with open(log_file, 'w', encoding='utf-8') as f:
+            json.dump(logs, f, indent=2, ensure_ascii=False)
+
+        return True
+    except Exception as e:
+        print(f"保存日志失败: {e}")
+        return False
+
+def load_operation_logs(project_id, limit=50):
+    """加载项目操作日志"""
+    try:
+        ensure_logs_dir()
+        log_file = os.path.join(LOGS_DIR, f'project_{project_id}.json')
+
+        if not os.path.exists(log_file):
+            return []
+
+        with open(log_file, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+
+        return logs[:limit]
+    except Exception as e:
+        print(f"加载日志失败: {e}")
+        return []
 
 def load_projects():
     """加载项目配置"""
@@ -607,7 +672,10 @@ def pull_build_project(project_id):
     def generate():
         """生成器函数，用于流式输出"""
         ssh_mode = project.get('ssh', {}).get('enabled', False)
-        mode_text = f" (SSH: {project.get('ssh', {}).get('host', '')})" if ssh_mode else " (本地)"
+        ssh_host = project.get('ssh', {}).get('host', '')
+        mode_text = f" (SSH: {ssh_host})" if ssh_mode else " (本地)"
+
+        output_log = []  # 收集输出用于日志
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
@@ -618,6 +686,7 @@ def pull_build_project(project_id):
         git_return_code = 0
         for item_type, content in execute_command_stream('git pull', project):
             if item_type == 'output':
+                output_log.append(content)
                 yield f"data: {json.dumps({'type': 'output', 'step': 'git pull', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 git_return_code = content
@@ -626,6 +695,8 @@ def pull_build_project(project_id):
             error_message = f'Git pull 失败 (退出码: {git_return_code})'
             yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
+            # 保存日志
+            save_operation_log(project_id, project['name'], 'Pull & Build', False, ''.join(output_log), ssh_mode, ssh_host)
             return
 
         yield f"data: {json.dumps({'type': 'step', 'step': 'git pull', 'status': 'success'})}\n\n"
@@ -636,6 +707,7 @@ def pull_build_project(project_id):
         build_return_code = 0
         for item_type, content in execute_command_stream('docker compose build', project):
             if item_type == 'output':
+                output_log.append(content)
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose build', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 build_return_code = content
@@ -644,10 +716,15 @@ def pull_build_project(project_id):
             error_message = f'Docker compose build 失败 (退出码: {build_return_code})'
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message})}\n\n"
+            # 保存日志
+            save_operation_log(project_id, project['name'], 'Pull & Build', False, ''.join(output_log), ssh_mode, ssh_host)
             return
 
         yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose build', 'status': 'success'})}\n\n"
         yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': 'Pull & Build 完成'})}\n\n"
+
+        # 保存日志
+        save_operation_log(project_id, project['name'], 'Pull & Build', True, ''.join(output_log), ssh_mode, ssh_host)
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -670,7 +747,10 @@ def restart_project(project_id):
     def generate():
         """生成器函数，用于流式输出"""
         ssh_mode = project.get('ssh', {}).get('enabled', False)
-        mode_text = f" (SSH: {project.get('ssh', {}).get('host', '')})" if ssh_mode else " (本地)"
+        ssh_host = project.get('ssh', {}).get('host', '')
+        mode_text = f" (SSH: {ssh_host})" if ssh_mode else " (本地)"
+
+        output_log = []  # 收集输出用于日志
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
@@ -681,6 +761,7 @@ def restart_project(project_id):
         down_return_code = 0
         for item_type, content in execute_command_stream('docker compose down', project, cwd=project_path):
             if item_type == 'output':
+                output_log.append(content)
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose down', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 down_return_code = content
@@ -696,9 +777,12 @@ def restart_project(project_id):
         up_return_code = 0
         for item_type, content in execute_command_stream('docker compose up -d', project, cwd=project_path):
             if item_type == 'output':
+                output_log.append(content)
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker compose up -d', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 up_return_code = content
+
+        success = (down_return_code == 0 and up_return_code == 0)
 
         if up_return_code == 0:
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'success'})}\n\n"
@@ -706,6 +790,9 @@ def restart_project(project_id):
         else:
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker compose up -d', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': 'docker compose up 失败'})}\n\n"
+
+        # 保存日志
+        save_operation_log(project_id, project['name'], 'Down & Up', success, ''.join(output_log), ssh_mode, ssh_host)
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -728,7 +815,10 @@ def clean_project(project_id):
     def generate():
         """生成器函数，用于流式输出"""
         ssh_mode = project.get('ssh', {}).get('enabled', False)
-        mode_text = f" (SSH: {project.get('ssh', {}).get('host', '')})" if ssh_mode else " (本地)"
+        ssh_host = project.get('ssh', {}).get('host', '')
+        mode_text = f" (SSH: {ssh_host})" if ssh_mode else " (本地)"
+
+        output_log = []  # 收集输出用于日志
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text})}\n\n"
@@ -739,16 +829,22 @@ def clean_project(project_id):
         prune_return_code = 0
         for item_type, content in execute_command_stream('docker system prune -af', project, cwd=project_path):
             if item_type == 'output':
+                output_log.append(content)
                 yield f"data: {json.dumps({'type': 'output', 'step': 'docker system prune -f', 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 prune_return_code = content
 
-        if prune_return_code == 0:
+        success = (prune_return_code == 0)
+
+        if success:
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker system prune -f', 'status': 'success'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': '清理完成'})}\n\n"
         else:
             yield f"data: {json.dumps({'type': 'step', 'step': 'docker system prune -f', 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': '清理失败'})}\n\n"
+
+        # 保存日志
+        save_operation_log(project_id, project['name'], 'Clean', success, ''.join(output_log), ssh_mode, ssh_host)
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -786,7 +882,10 @@ def execute_custom_command(project_id):
     def generate():
         """生成器函数，用于流式输出"""
         ssh_mode = project.get('ssh', {}).get('enabled', False)
-        mode_text = f" SSH({project.get('ssh', {}).get('host', '')})" if ssh_mode else " 本地"
+        ssh_host = project.get('ssh', {}).get('host', '')
+        mode_text = f" SSH({ssh_host})" if ssh_mode else " 本地"
+
+        output_log = []  # 收集输出用于日志
 
         # 发送开始信号
         yield f"data: {json.dumps({'type': 'start', 'project': project['name'] + mode_text, 'command': custom_command})}\n\n"
@@ -797,16 +896,22 @@ def execute_custom_command(project_id):
         cmd_return_code = 0
         for item_type, content in execute_command_stream(custom_command, project, cwd=project_path):
             if item_type == 'output':
+                output_log.append(content)
                 yield f"data: {json.dumps({'type': 'output', 'step': custom_command, 'line': content.rstrip()})}\n\n"
             elif item_type == 'returncode':
                 cmd_return_code = content
 
-        if cmd_return_code == 0:
+        success = (cmd_return_code == 0)
+
+        if success:
             yield f"data: {json.dumps({'type': 'step', 'step': custom_command, 'status': 'success'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': True, 'message': '命令执行完成'})}\n\n"
         else:
             yield f"data: {json.dumps({'type': 'step', 'step': custom_command, 'status': 'error'})}\n\n"
             yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': f'命令执行失败 (退出码: {cmd_return_code})'})}\n\n"
+
+        # 保存日志
+        save_operation_log(project_id, project['name'], f'自定义命令: {custom_command}', success, ''.join(output_log), ssh_mode, ssh_host)
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -1042,6 +1147,26 @@ def get_version():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': f'获取版本信息失败: {str(e)}'}), 500
+
+@app.route('/api/logs/<int:project_id>', methods=['GET'])
+def get_project_logs(project_id):
+    """获取项目操作日志"""
+    projects = load_projects()
+
+    if project_id >= len(projects):
+        return jsonify({'success': False, 'message': '项目不存在'}), 404
+
+    # 获取limit参数，默认50条
+    limit = request.args.get('limit', 50, type=int)
+    limit = min(limit, 100)  # 最多100条
+
+    logs = load_operation_logs(project_id, limit)
+
+    return jsonify({
+        'success': True,
+        'logs': logs,
+        'total': len(logs)
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=6666, debug=True)
